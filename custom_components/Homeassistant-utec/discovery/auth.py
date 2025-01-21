@@ -4,6 +4,7 @@ import aiohttp
 import logging
 from urllib.parse import urlencode
 
+
 _LOGGER = logging.getLogger(__name__)
 
 class UtecApiClient:
@@ -22,9 +23,9 @@ class UtecApiClient:
         self._token = token
         self._session = session or aiohttp.ClientSession()
 
-    async def async_get_access_token(self, code: str) -> Dict[str, Any]:
+async def async_get_access_token(self, code: str) -> Dict[str, Any]:
         """Get access token from authorization code."""
-        from .const import OAUTH2_TOKEN
+        from const import TOKEN_URL
 
         params = {
             "grant_type": "authorization_code",
@@ -32,15 +33,15 @@ class UtecApiClient:
             "code": code,
         }
 
-        url = f"{OAUTH2_TOKEN}?{urlencode(params)}"
+        url = f"{TOKEN_URL}?{urlencode(params)}"
 
         async with self._session.post(url) as response:
             response.raise_for_status()
             return await response.json()
 
-    async def async_refresh_token(self, refresh_token: str) -> Dict[str, Any]:
+async def async_refresh_token(self, refresh_token: str) -> Dict[str, Any]:
         """Refresh access token."""
-        from .const import OAUTH2_TOKEN
+        from const import TOKEN_URL
 
         params = {
             "grant_type": "refresh_token",
@@ -49,13 +50,13 @@ class UtecApiClient:
             "client_secret": self._client_secret,
         }
 
-        url = f"{OAUTH2_TOKEN}?{urlencode(params)}"
+        url = f"{TOKEN_URL}?{urlencode(params)}"
 
         async with self._session.post(url) as response:
             response.raise_for_status()
             return await response.json()
 
-    async def close(self) -> None:
+async def close(self) -> None:
         """Close the session."""
         if self._session:
             await self._session.close()
