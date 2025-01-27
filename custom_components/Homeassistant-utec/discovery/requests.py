@@ -28,6 +28,7 @@ class DeviceCapability:
     """Device capabilities supported by U-tec."""
     SWITCH = "st.switch"
     LOCK = "st.lock"
+    LOCK_SENSOR = "st.DoorSensor"
     LIGHT = "st.light"
     COLOR = "st.color"
     COLOR_TEMPERATURE = "st.colorTemperature"

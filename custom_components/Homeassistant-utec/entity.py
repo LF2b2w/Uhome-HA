@@ -34,15 +34,14 @@ class UtecHandleType:
 
 class DeviceCapability:
     """Device capabilities supported by U-tec."""
-    LOCK = "Lock"
-    BATTERY_LEVEL = "BatteryLevel"
-    LOCK_USER = "LockUser"
-    DOOR_SENSOR = "DoorSensor"
+    LOCK = "lockstate"
+    BATTERY_LEVEL = "level"
+    DOOR_SENSOR = "	sensorstate"
     SWITCH = "Switch"
-    SWITCH_LEVEL = "SwitchLevel"
-    BRIGHTNESS = "Brightness"
-    COLOR = "Color"
-    COLOR_TEMPERATURE = "ColorTemperature"
+    SWITCH_LEVEL = "Level"
+    #BRIGHTNESS = "Brightness"
+    #COLOR = "Color"
+    #COLOR_TEMPERATURE = "ColorTemperature"
     HEALTH_CHECK = "HealthCheck"  # Mandatory for all devices
 
 
@@ -51,7 +50,6 @@ HANDLE_TYPE_CAPABILITIES = {
     "utec-lock": [
         DeviceCapability.LOCK,
         DeviceCapability.BATTERY_LEVEL,
-        DeviceCapability.LOCK_USER,
         DeviceCapability.HEALTH_CHECK,
     ],
     "utec-lock-sensor": [
@@ -71,9 +69,6 @@ HANDLE_TYPE_CAPABILITIES = {
     ],
     "utec-light-rgbaw-br": [
         DeviceCapability.SWITCH,
-        DeviceCapability.BRIGHTNESS,
-        DeviceCapability.COLOR,
-        DeviceCapability.COLOR_TEMPERATURE,
         DeviceCapability.HEALTH_CHECK,
     ],
 }
