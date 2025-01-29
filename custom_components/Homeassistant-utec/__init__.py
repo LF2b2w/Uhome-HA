@@ -1,56 +1,60 @@
-"""The U-tec Integration."""
+# custom_components/utec/__init__.py
+"""The U-Tec integration."""
 import asyncio
-from typing import Dict, Any
+import logging
+from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.const import Platform
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.const import (
+    CONF_CLIENT_ID,
+    CONF_CLIENT_SECRET,
+    Platform,
+)
+from homeassistant.helpers import config_entry_oauth2_flow
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import DOMAIN
-from .discovery.auth import UtecApiClient
+from .coordinator import UTecDataUpdateCoordinator
+from .discovery.auth import UTecOAuth2Implementation
 
-PLATFORMS: list[Platform] = []
+PLATFORMS = [
+    Platform.LOCK,
+    Platform.SENSOR,
+    Platform.SWITCH,
+]
 
-async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
-    """Set up the U-tec component."""
-    hass.data.setdefault(DOMAIN, {})
-    return True
+_LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up U-tec from a config entry."""
+    """Set up U-Tec from a config entry."""
+    implementation = UTecOAuth2Implementation(
+        hass,
+        DOMAIN,
+        entry.data[CONF_CLIENT_ID],
+        entry.data[CONF_CLIENT_SECRET],
+        f"{hass.config.external_url}/auth/external/callback",
+    )
+
+    session = config_entry_oauth2_flow.OAuth2Session(hass, entry, implementation)
+
     try:
-        # Initialize API client with stored credentials
-        client = UtecApiClient(
-            entry.data["client_id"],
-            entry.data["client_secret"],
-            entry.data.get("access_token")
-        )
+        await session.async_ensure_token_valid()
+    except config_entry_oauth2_flow.OAuth2SessionException:
+        _LOGGER.error("OAuth2 token refresh failed")
+        return False
 
-        # Store the client instance
-        hass.data[DOMAIN][entry.entry_id] = client
+    coordinator = UTecDataUpdateCoordinator(hass, entry, session)
+    await coordinator.async_config_entry_first_refresh()
 
-        # Set up platforms
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
-        # Register update listener for config entry changes
-        entry.async_on_unload(entry.add_update_listener(update_listener))
-
-        return True
-
-    except Exception as err:
-        raise ConfigEntryNotReady from err
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    # Unload platforms
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        # Remove client instance
-        client = hass.data[DOMAIN].pop(entry.entry_id)
-        await client.close()
-
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unload_ok:
+        hass.data[DOMAIN].pop(entry.entry_id)
     return unload_ok
-
-async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle options update."""
-    await hass.config_entries.async_reload(entry.entry_id)

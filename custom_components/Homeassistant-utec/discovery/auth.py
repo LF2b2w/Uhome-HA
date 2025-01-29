@@ -1,62 +1,105 @@
-"""API Client for U-tec Integration."""
-from typing import Any, Dict, Optional
-import aiohttp
+# custom_components/utec/oauth2.py
+"""OAuth2 implementation for U-Tec."""
+from typing import Any, cast
 import logging
-from urllib.parse import urlencode
+from aiohttp import ClientSession
+import voluptuous as vol
 
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_entry_oauth2_flow
+from homeassistant.data_entry_flow import FlowResult
+from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
+
+from const import DOMAIN, AUTH_URL, TOKEN_URL
 
 _LOGGER = logging.getLogger(__name__)
 
-class UtecApiClient:
-    """API Client for communicating with the U-tec OAuth2 service."""
+class UTecOAuth2Implementation(config_entry_oauth2_flow.LocalOAuth2Implementation):
+    """OAuth2 implementation that only uses the external url."""
 
     def __init__(
         self,
+        hass: HomeAssistant,
+        domain: str,
         client_id: str,
         client_secret: str,
-        token: Optional[Dict[str, Any]] = None,
-        session: Optional[aiohttp.ClientSession] = None,
+        redirect_uri: str,
     ) -> None:
-        """Initialize API client."""
-        self._client_id = client_id
-        self._client_secret = client_secret
-        self._token = token
-        self._session = session or aiohttp.ClientSession()
+        """Initialize local auth implementation."""
+        self._name = domain
+        super().__init__(
+            hass=hass,
+            domain=domain,
+            client_id=client_id,
+            client_secret=client_secret,
+            authorize_url=AUTH_URL,
+            token_url=TOKEN_URL,
+        )
+        self.redirect_uri = redirect_uri
 
-async def async_get_access_token(self, code: str) -> Dict[str, Any]:
-        """Get access token from authorization code."""
-        from const import TOKEN_URL
+    @property
+    def name(self) -> str:
+        """Name of the implementation."""
+        return self._name
 
-        params = {
-            "grant_type": "authorization_code",
-            "client_id": self._client_id,
-            "code": code,
+    @property
+    def extra_authorize_data(self) -> dict:
+        """Extra data that needs to be appended to the authorize url."""
+        return {
+            "scope": "all",
+            "redirect_uri": self.redirect_uri,
         }
 
-        url = f"{TOKEN_URL}?{urlencode(params)}"
+class OAuth2FlowHandler(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domain=DOMAIN):
+    """Config flow to handle U-Tec OAuth2 authentication."""
 
-        async with self._session.post(url) as response:
-            response.raise_for_status()
-            return await response.json()
+    DOMAIN = DOMAIN
+    VERSION = 1
 
-async def async_refresh_token(self, refresh_token: str) -> Dict[str, Any]:
-        """Refresh access token."""
-        from const import TOKEN_URL
+    @property
+    def logger(self) -> logging.Logger:
+        """Return logger."""
+        return logging.getLogger(__name__)
 
-        params = {
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-            "client_id": self._client_id,
-            "client_secret": self._client_secret,
-        }
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle a flow initialized by the user."""
+        if self._async_current_entries():
+            return self.async_abort(reason="single_instance_allowed")
 
-        url = f"{TOKEN_URL}?{urlencode(params)}"
+        if user_input is None:
+            return self.async_show_form(
+                step_id="user",
+                data_schema=vol.Schema({
+                    vol.Required(CONF_CLIENT_ID): str,
+                    vol.Required(CONF_CLIENT_SECRET): str,
+                })
+            )
 
-        async with self._session.post(url) as response:
-            response.raise_for_status()
-            return await response.json()
+        return await self.async_step_pick_implementation(
+            user_input={
+                "implementation": self.DOMAIN,
+                CONF_CLIENT_ID: user_input[CONF_CLIENT_ID],
+                CONF_CLIENT_SECRET: user_input[CONF_CLIENT_SECRET],
+            }
+        )
 
-async def close(self) -> None:
-        """Close the session."""
-        if self._session:
-            await self._session.close()
+    async def async_oauth_create_entry(self, data: dict) -> FlowResult:
+        """Create an entry for the flow."""
+        return self.async_create_entry(
+            title="U-Tec Account",
+            data=data,
+        )
+
+    async def async_step_reauth(self, user_input=None):
+        """Perform reauth upon an API authentication error."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input=None):
+        """Dialog that informs the user that reauth is required."""
+        if user_input is None:
+            return self.async_show_form(
+                step_id="reauth_confirm",
+                data_schema=vol.Schema({}),
+            )
+
+        return await self.async_step_user()
