@@ -1,0 +1,16 @@
+{
+  "domain": "Homassistant-ultraloq",
+  "name": "U-tec Integration",
+  "config_flow": true,
+  "documentation": "https://github.com/LF2b2w/Homeassistant-Ultraloq",
+  "requirements": [
+    "aiohttp>=3.8.0"
+  ],
+  "ssdp": [],
+  "zeroconf": [],
+  "homekit": {},
+  "dependencies": [],
+  "codeowners": ["@LF2b2w"],
+  "version": "1.0.0",
+  "iot_class": "cloud_polling"
+}

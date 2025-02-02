@@ -1,17 +1,13 @@
-"""Constants for the U-tec Integration."""
-DOMAIN = "utec_integration"
-MANUFACTURER = "U-Tec"
-CONF_IMPLEMENTATION: Final = "implementation"
+"""Constants"""
+DOMAIN = "Utec-Hass"
+PLATFORMS = ["lock", "light", "switch"]
 
-# OAuth2 related constants
-AUTH_URL = "https://oauth.u-tec.com/authorize"
-TOKEN_URL = "https://oauth.u-tec.com/token"
-
-# Config flow constants
-CONF_SCOPE = "openapi"  # Add scope constant
-
-# Default scope for U-tec API
-DEFAULT_SCOPE = "openapi"  # Update this with the correct scope
-
-#Requests
+# API endpoints
 API_URL = "https://api.u-tec.com/"
+
+# Config flow
+CONF_CLIENT_ID = "client_id"
+CONF_CLIENT_SECRET = "client_secret"
+CONF_API_SCOPE = ""
+
+# Other constants used across the integration

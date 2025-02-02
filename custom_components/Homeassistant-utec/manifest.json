@@ -1,16 +1,18 @@
 {
-  "domain": "Homassistant-ultraloq",
-  "name": "U-tec Integration",
-  "config_flow": true,
-  "documentation": "https://github.com/LF2b2w/Homeassistant-Ultraloq",
-  "requirements": [
-    "aiohttp>=3.8.0"
-  ],
-  "ssdp": [],
-  "zeroconf": [],
-  "homekit": {},
-  "dependencies": [],
-  "codeowners": ["@LF2b2w"],
-  "version": "1.0.0",
-  "iot_class": "cloud_polling"
+    "domain": "your_integration",
+    "name": "Your Integration",
+    "config_flow": true,
+    "documentation": "https://github.com/your/repo",
+    "requirements": ["your-api-library==1.0.0"],
+    "dependencies": ["application_credentials"],
+    "codeowners": ["@yourgithub"],
+    "iot_class": "cloud_polling",
+    "version": "1.0.0",
+    "oauth2": [
+        {
+            "name": "Your Integration OAuth2",
+            "authorization_url": "https://api.example.com/oauth2/auth",
+            "token_url": "https://api.example.com/oauth2/token"
+        }
+    ]
 }

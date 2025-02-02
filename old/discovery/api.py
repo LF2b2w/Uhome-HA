@@ -6,12 +6,12 @@ from datetime import datetime
 
 from aiohttp import ClientSession
 from homeassistant.helpers import config_entry_oauth2_flow
-from .const import API_BASE_URL
+from const import API_BASE_URL
 
 _LOGGER = logging.getLogger(__name__)
 
-class UTecAPIClient:
-    """API client for U-Tec."""
+class APIClient(UhomeAPI):
+    """Initialise API Client"""
 
     def __init__(
         self,

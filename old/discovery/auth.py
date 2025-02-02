@@ -4,6 +4,7 @@ from typing import Any, cast
 import logging
 from aiohttp import ClientSession
 import voluptuous as vol
+from py-Utec import AbstractAuth
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_entry_oauth2_flow
@@ -13,6 +14,19 @@ from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
 from const import DOMAIN, AUTH_URL, TOKEN_URL
 
 _LOGGER = logging.getLogger(__name__)
+
+class AuthImpl(AbstractAuth):
+    def __init__(self, websession: ClientSession, host: str, token_manager):
+        super().__init__(websession, host)
+        self.token_manager = TokenManager
+
+    async def async_get_access_token(self) -> str:
+        
+
+
+class TokenManager:
+    def __init__(self):
+
 
 class UTecOAuth2Implementation(config_entry_oauth2_flow.LocalOAuth2Implementation):
     """OAuth2 implementation that only uses the external url."""
@@ -46,7 +60,7 @@ class UTecOAuth2Implementation(config_entry_oauth2_flow.LocalOAuth2Implementatio
     def extra_authorize_data(self) -> dict:
         """Extra data that needs to be appended to the authorize url."""
         return {
-            "scope": "all",
+            "scope": "openapi",
             "redirect_uri": self.redirect_uri,
         }
 
