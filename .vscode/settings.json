@@ -1,0 +1,5 @@
+{
+    "python.analysis.extraPaths": [
+        "./custom_components/Homeassistant-utec/Core"
+    ]
+}
