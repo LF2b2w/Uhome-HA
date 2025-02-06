@@ -1,4 +1,4 @@
-#Uhome-HA Home Assistant Integration
+# Uhome-HA Home Assistant Integration
 
 A Home Assistant integration for U-tec smart home devices that allows you to control your U-tec locks, lights, switches, and sensors through Home Assistant.
 
