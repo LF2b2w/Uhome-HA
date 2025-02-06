@@ -15,6 +15,7 @@
       "utec_py==0.0.3"
     ],
     "ssdp": [],
-    "zeroconf": []
+    "zeroconf": [],
+    "version": ["0.1.0"]
   }
   
