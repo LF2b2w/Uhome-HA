@@ -1,18 +1,20 @@
 {
-    "domain": "your_integration",
-    "name": "Your Integration",
+    "domain": "uhomeha",
+    "name": "Uhome-HA",
+    "codeowners": [
+      "@Lf2b2w"
+    ],
     "config_flow": true,
-    "documentation": "https://github.com/your/repo",
-    "requirements": ["your-api-library==1.0.0"],
-    "dependencies": ["application_credentials"],
-    "codeowners": ["@yourgithub"],
+    "dependencies": [
+      "application_credentials"
+    ],
+    "documentation": "https://github.com/LF2b2w/Uhome-HA",
+    "homekit": {},
     "iot_class": "cloud_polling",
-    "version": "1.0.0",
-    "oauth2": [
-        {
-            "name": "Your Integration OAuth2",
-            "authorization_url": "https://api.example.com/oauth2/auth",
-            "token_url": "https://api.example.com/oauth2/token"
-        }
-    ]
-}
+    "requirements": [
+      "utec_py==0.0.3"
+    ],
+    "ssdp": [],
+    "zeroconf": []
+  }
+  

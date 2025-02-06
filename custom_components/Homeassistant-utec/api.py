@@ -1,108 +1,85 @@
-# api.py
-"""API for Utec."""
-from asyncio.log import logger
-from typing import Any, Dict, Optional
-from uuid import uuid4
+"""API wrapper for Uhome/Utec API."""
 
+from venv import logger
+
+from aiohttp import ClientResponse, ClientSession
+from utec_py_LF2b2w.api import UHomeApi
+from utec_py_LF2b2w.auth import AbstractAuth
+
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_entry_oauth2_flow
 
-from .const import (
-    API_BASE_URL,
-    ApiNamespace,
-    ApiOperation,
-    ApiRequest
-)
-from exceptions import ApiError
 
-class UtecAPI:
-    """Utec API class."""
+class AsyncConfigEntryAuth(AbstractAuth):
+    """Provide Uhome-HA authentication tied to an OAuth2 based config entry."""
 
     def __init__(
         self,
+        websession: ClientSession,
         oauth_session: config_entry_oauth2_flow.OAuth2Session,
     ) -> None:
-        """Initialize the API."""
+        """Initialize Uhome-HA auth."""
+        super().__init__(websession)
         self._oauth_session = oauth_session
 
-    async def _create_request(
-        self,
-        namespace: ApiNamespace,
-        operation: ApiOperation,
-        parameters: Optional[Dict] = None
-    ) -> ApiRequest:
-        """Create a standardized API request."""
-        header = {
-            "namespace": namespace,
-            "name": operation,
-            "messageID": str(uuid4()),
-            "payloadVersion": "1",
-        }
-        return {
-            "header": header,
-            "payload": parameters
-        }
+    async def async_get_access_token(self) -> str:
+        """Return a valid access token."""
+        await self._oauth_session.async_ensure_token_valid()
+        return self._oauth_session.token["access_token"]
 
-    async def _make_request(self, method: str, **kwargs) -> Dict[str, Any]:
+    async def make_request(self, method: str, url: str, **kwargs) -> ClientResponse:
         """Make an authenticated API request."""
-        async with self._oauth_session.async_request(method, **kwargs) as response:
-            if response.status == 204:
-                return {}
-            if response.status in (200, 201, 202):
-                return await response.json()
+        access_token = await self.async_get_access_token()
+        headers = kwargs.get("headers", {})
+        headers["Authorization"] = f"Bearer {access_token}"
+        kwargs["headers"] = headers
 
-            error_text = await response.text()
-            logger.error(f"API error: {response.status} - {error_text}")
-            raise ApiError(response.status, error_text)
+        return await self.websession.request(method, f"{self.host}/{url}", **kwargs)
 
-    async def discover_devices(self) -> Dict[str, Any]:
-        """Discover available devices."""
-        payload = await self._create_request(
-            ApiNamespace.DEVICE,
-            ApiOperation.DISCOVERY
-        )
-        return await self._make_request("POST", json=payload)
 
-    async def query_device(self, device_id: str) -> Dict[str, Any]:
-        """Query device status."""
-        params = {
-            "devices": [{"id": device_id}]
-        }
-        payload = await self._create_request(
-            ApiNamespace.DEVICE,
-            ApiOperation.QUERY,
-            params
-        )
-        return await self._make_request("POST", json=payload)
+class UhomeApiWrapper:
+    """Wrapper for the U‑tec API that uses Home Assistant’s OAuth2 session."""
+
+    def __init__(self, hass: HomeAssistant, oauth_session) -> None:
+        """Initialize the API wrapper.
+
+        :param hass: Home Assistant instance.
+        :param oauth_session: Home Assistant-managed OAuth2 session.
+        """
+        self.hass = hass
+        self.session = oauth_session
+        # Create the UHomeApi instance using the provided session.
+        # Assume UHomeApi accepts a session that already appends the required
+        # Authorization headers based on tokens managed by Home Assistant.
+        self.api = UHomeApi(self.session)
+
+    async def discover_devices(self) -> dict:
+        """Discover available devices via the API."""
+        try:
+            return await self.api.discover_devices()
+        except (ConnectionError, TimeoutError) as err:
+            logger.error("Network error discovering devices: %s", err)
+            return {}
+        except ValueError as err:
+            logger.error("Value error discovering devices: %s", err)
+            return {}
 
     async def send_command(
         self,
         device_id: str,
         capability: str,
         command: str,
-        arguments: Optional[Dict] = None
-    ) -> Dict[str, Any]:
-        """Send command to device."""
-        command_data = {
-            "capability": capability,
-            "name": command
-        }
-        if arguments:
-            command_data["arguments"] = arguments
+        arguments: dict | None = None,
+    ) -> dict:
+        """Send a command to a specific device."""
+        try:
+            return await self.api.send_command(
+                device_id, capability, command, arguments
+            )
+        except (ConnectionError, TimeoutError, ValueError) as err:
+            logger.error("Error sending command: %s", err)
+            return {}
 
-        params = {
-            "devices": [{
-                "id": device_id,
-                "command": command_data
-            }]
-        }
-
-        payload = await self._create_request(
-            ApiNamespace.DEVICE,
-            ApiOperation.COMMAND,
-            params
-        )
-        return await self._make_request("POST", json=payload)
-
-    async def close(self):
-        """Close the API client."""
-        await self.auth.close()
+    async def async_close(self):
+        """Close any resources if needed."""
+        # Home Assistant’s OAuth2 session handles token refresh internally.

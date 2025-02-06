@@ -1,8 +1,0 @@
-config:
-  step:
-    user:
-      title: "U-tec Authorization"
-      description: "Click submit to begin the authorization process."
-    auth:
-      title: "Authorizing"
-      description: "Please authorize U-tec in the browser window that opened.\n\nIf the window didn't open, [click here]({auth_url})"
