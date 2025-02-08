@@ -1,4 +1,4 @@
-"""Application credentials platform for the Uhome-HA integration."""
+"""Application credentials platform for the testOauth2 integration."""
 
 from homeassistant.components.application_credentials import AuthorizationServer
 from homeassistant.core import HomeAssistant
