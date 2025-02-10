@@ -6,9 +6,10 @@ from utec_py.api import UHomeApi
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
+from homeassistant.config_entries import ConfigEntry, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
 from homeassistant.core import _LOGGER, HomeAssistant, callback
+from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.util import Mapping
@@ -53,7 +54,7 @@ class UhomeOAuth2FlowHandler(
     @property
     def extra_authorize_data(self) -> dict[str, vol.Any]:
         """Extra data that needs to be appended to the authorize url."""
-        return {"scope": self._api_scope or DEFAULT_API_SCOPE, "state": self.flow_id}
+        return {"scope": self._api_scope or DEFAULT_API_SCOPE}
 
     async def async_step_user(self, user_input=None) -> ConfigFlowResult:
         """Prompt the user to enter their client credentials and API scope."""
@@ -68,6 +69,10 @@ class UhomeOAuth2FlowHandler(
             self._client_id = user_input[CONF_CLIENT_ID]
             self._client_secret = user_input[CONF_CLIENT_SECRET]
             self._api_scope = user_input.get(CONF_API_SCOPE, DEFAULT_API_SCOPE)
+
+            self.logger.debug(
+                "Retrieved client credentials, starting oauth authentication"
+            )
 
             # Store client credentials for later use
             self.async_register_implementation(
@@ -96,6 +101,11 @@ class UhomeOAuth2FlowHandler(
         self, data: dict[str, vol.Any]
     ) -> config_entries.FlowResult:
         """Create the config entry after successful OAuth2 authentication."""
+        self.logger.debug(
+            "Registering OAuth2 implementation with client_id=%s and client_secret=%s",
+            self._client_id,
+            self._client_secret,
+        )
         return self.async_create_entry(
             title="Uhome Integration",
             data={
@@ -110,10 +120,10 @@ class UhomeOAuth2FlowHandler(
     @staticmethod
     @callback
     def async_get_options_flow(
-        config_entry: config_entries.ConfigEntry,
+        config_entry: ConfigEntry,
     ) -> config_entries.OptionsFlow:
         """Get the options flow for this handler."""
-        return OptionsFlowHandler(config_entry)
+        return OptionsFlowHandler()
 
     async def async_step_reauth(
         self, entry_data: Mapping[str, vol.Any]
@@ -167,18 +177,17 @@ class UhomeOAuth2FlowHandler(
         return True
 
 
-class OptionsFlowHandler(config_entries.OptionsFlow):
+class OptionsFlowHandler(OptionsFlow):
     """Handle options flow for Uhome integration."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+    def __init__(self) -> None:
         """Initialize options flow."""
-        self.config_entry = config_entry
         self.api: UHomeApi = None
         self.devices: dict[str, vol.Any] = {}
 
     async def async_step_init(
         self, user_input: dict[str, vol.Any] | None
-    ) -> ConfigFlowResult:
+    ) -> FlowResult:
         """Manage options."""
         errors = {}
 

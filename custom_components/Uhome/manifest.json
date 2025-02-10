@@ -1,6 +1,7 @@
 {
   "domain": "Uhome",
   "name": "Uhome",
+  "version": "0.2.0",
   "codeowners": [
     "@LF2b2w"
   ],
@@ -11,6 +12,7 @@
   "documentation": "https://www.home-assistant.io/integrations/test",
   "iot_class": "cloud_polling",
   "requirements": [
-    "utec_py_LF2b2w==0.1.1"
-  ]
+    "utec_py_LF2b2w==0.1.4"
+  ],
+  "integration_type": "hub"
 }

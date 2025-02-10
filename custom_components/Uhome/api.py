@@ -13,7 +13,6 @@ class AsyncConfigEntryAuth(AbstractAuth):
         self,
         websession: ClientSession,
         oauth_session: config_entry_oauth2_flow.OAuth2Session,
-        host: str,
     ) -> None:
         """Initialize Oauth2 auth."""
         super().__init__(websession)
@@ -21,6 +20,6 @@ class AsyncConfigEntryAuth(AbstractAuth):
 
     async def async_get_access_token(self) -> str:
         """Return a valid access token."""
-        await self._oauth_session.async_ensure_token_valid()
-
+        if self._oauth_session.valid_token is None:
+            await self._oauth_session.async_ensure_token_valid()
         return self._oauth_session.token["access_token"]

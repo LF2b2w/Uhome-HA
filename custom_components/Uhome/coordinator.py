@@ -6,7 +6,7 @@ import logging
 from utec_py.api import UHomeApi
 from utec_py.devices.device import BaseDevice
 from utec_py.devices.light import Light
-from utec_py.devices.lock import UhomeLock
+from utec_py.devices.lock import Lock
 from utec_py.devices.switch import Switch
 from utec_py.exceptions import ApiError, AuthenticationError
 from voluptuous import Any
@@ -22,14 +22,14 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Uhome data."""
 
     def __init__(
-        self, hass: HomeAssistant, api: UHomeApi, update_interval: timedelta
+        self, hass: HomeAssistant, api: UHomeApi
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
             _LOGGER,
             name="Uhome devices",
-            update_interval=update_interval,
+            update_interval=timedelta(seconds=30),
         )
         self.api = api
         self.devices: dict[str, BaseDevice] = {}
@@ -38,8 +38,8 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         """Fetch data from API endpoint."""
         try:
             # Validate authentication first
-            if not await self.api.validate_auth():
-                raise ConfigEntryAuthFailed("Invalid authentication")
+            #if not await self.api.validate_auth():
+            #    raise ConfigEntryAuthFailed("Invalid authentication")
 
             # Discover devices
             discovery_data = await self.api.discover_devices()
@@ -53,7 +53,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                 if device_id not in self.devices:
                     # Create new device instance based on handle type
                     if "lock" in handle_type.lower():
-                        device = UhomeLock(device_data, self.api)
+                        device = Lock(device_data, self.api)
                     elif "light" in handle_type.lower():
                         device = Light(device_data, self.api)
                     elif "switch" in handle_type.lower():
