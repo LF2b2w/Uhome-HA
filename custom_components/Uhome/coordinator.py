@@ -1,4 +1,4 @@
-"""Data coordinator for Utec integration."""
+"""Data coordinator for Uhome integration."""
 
 from datetime import timedelta
 import logging

@@ -1,4 +1,4 @@
-"""Config flow for testOauth2."""
+"""Config flow for Uhome."""
 
 import logging
 
@@ -182,7 +182,7 @@ class OptionsFlowHandler(OptionsFlow):
 
     def __init__(self) -> None:
         """Initialize options flow."""
-        self.api: UHomeApi = None
+        self.api = None
         self.devices: dict[str, vol.Any] = {}
 
     async def async_step_init(
@@ -191,11 +191,23 @@ class OptionsFlowHandler(OptionsFlow):
         """Manage options."""
         errors = {}
 
-        # Get API instance from Home Assistant
-        self.api = self.hass.data[DOMAIN][self.config_entry.entry_id]
+        try:
+            if DOMAIN in self.hass.data and self.config_entry.entry_id in self.hass.data[DOMAIN]:
+                self.api = self.hass.data[DOMAIN][self.config_entry.entry_id]["api"]
+            else:
+                errors["base"] = "no_api_conf"
+                return self.async_show_form(
+                    step_id="init",
+                    errors=errors,
+                )
+        except KeyError:
+            errors["base"] = "CE_invalid"
+            return self.async_show_form(
+                step_id="init",
+                errors=errors,
+            )
 
         if user_input is not None:
-            # Combine the selected devices with the API scope
             options_data = {
                 "selected_devices": user_input.get("selected_devices", []),
                 CONF_API_SCOPE: user_input.get(CONF_API_SCOPE, DEFAULT_API_SCOPE),
@@ -203,7 +215,6 @@ class OptionsFlowHandler(OptionsFlow):
             return self.async_create_entry(title="", data=options_data)
 
         try:
-            # Fetch available devices from the API
             response = await self.api.discover_devices()
             if "payload" in response:
                 self.devices = {
@@ -216,10 +227,8 @@ class OptionsFlowHandler(OptionsFlow):
             errors["base"] = "cannot_connect"
             self.devices = {}
 
-        # Get currently selected devices from options
         selected_devices = self.config_entry.options.get("selected_devices", [])
 
-        # Create the options form schema
         options_schema = {
             vol.Optional(
                 "selected_devices", default=selected_devices

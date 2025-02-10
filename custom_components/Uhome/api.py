@@ -1,4 +1,4 @@
-"""API for Oauth2 bound to Home Assistant OAuth."""
+"""API for Uhome bound to Home Assistant OAuth."""
 
 from aiohttp import ClientSession
 from utec_py.auth import AbstractAuth
