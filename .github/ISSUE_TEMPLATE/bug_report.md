@@ -1,13 +1,10 @@
 ---
-name: Bug report
-about: Report a bug with the integration
-title: BUG
-labels: ''
-assignees: ''
-
----
-
-**Before you open a new issue, search through the existing issues to see if others have had the same problem.**
+name: "Bug report"
+description: "Report a bug with the integration"
+body:
+- type: markdown
+  attributes:
+    value: Before you open a new issue, search through the existing issues to see if others have had the same problem.
 - type: textarea
   attributes:
     label: "System Health details"
