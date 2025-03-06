@@ -233,7 +233,7 @@ class OptionsFlowHandler(OptionsFlow):
             discovered_devices = {}
 
         existing_devices = self.config_entry.options.get("selected_devices", [])
-        all_devices = {**discovered_devices}
+        all_devices = {discovered_devices}
         default_selected = [
             device_id for device_id in existing_devices if device_id in all_devices
         ]
@@ -262,7 +262,7 @@ class OptionsFlowHandler(OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data={})
 
-        return self.async_show_form(step_id="reauth_confirm")
+        return self.async_show_form(step_id="user")
 
 
 class InvalidAuth(HomeAssistantError):
