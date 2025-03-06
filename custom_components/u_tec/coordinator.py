@@ -3,17 +3,17 @@
 from datetime import timedelta
 import logging
 
+from voluptuous import Any
+
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from utec_py.api import UHomeApi
 from utec_py.devices.device import BaseDevice
 from utec_py.devices.light import Light
 from utec_py.devices.lock import Lock
 from utec_py.devices.switch import Switch
 from utec_py.exceptions import ApiError, AuthenticationError
-from voluptuous import Any
-
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -21,9 +21,7 @@ _LOGGER = logging.getLogger(__name__)
 class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Uhome data."""
 
-    def __init__(
-        self, hass: HomeAssistant, api: UHomeApi
-    ) -> None:
+    def __init__(self, hass: HomeAssistant, api: UHomeApi) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
@@ -38,7 +36,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         """Fetch data from API endpoint."""
         try:
             # Validate authentication first
-            #if not await self.api.validate_auth():
+            # if not await self.api.validate_auth():
             #    raise ConfigEntryAuthFailed("Invalid authentication")
 
             # Discover devices

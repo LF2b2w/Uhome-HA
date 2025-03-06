@@ -1,6 +1,6 @@
 """Constants for the Uhome integration."""
 
-DOMAIN = "Uhome"
+DOMAIN = "u_tec"
 
 OAUTH2_AUTHORIZE = "https://oauth.u-tec.com/authorize"
 OAUTH2_TOKEN = "https://oauth.u-tec.com/token"

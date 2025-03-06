@@ -2,16 +2,15 @@
 
 import logging
 
-from utec_py.api import UHomeApi
 import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
 from homeassistant.core import _LOGGER, HomeAssistant, callback
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_entry_oauth2_flow
+import homeassistant.helpers.config_validation as cv
 from homeassistant.util import Mapping
 
 from .const import (
@@ -187,37 +186,36 @@ class OptionsFlowHandler(OptionsFlow):
 
     async def async_step_init(
         self, user_input: dict[str, vol.Any] | None
-    ) -> FlowResult:
-        """Manage options."""
+    ) -> ConfigFlowResult:
+        """Present the main options menu."""
+        if user_input is None:
+            return self.async_show_menu(
+                step_id="init",
+                menu_options={
+                    "select_devices": "Select Devices",
+                    "api_reauth_opt": "Change API Config",
+                },
+            )
+        return self.async_show_form(step_id=user_input)
+
+    async def async_step_select_devices(
+        self, user_input: dict[str, vol.Any] | None
+    ) -> ConfigFlowResult:
+        """Allow user to select devices to add or remove."""
         errors = {}
 
-        try:
-            if DOMAIN in self.hass.data and self.config_entry.entry_id in self.hass.data[DOMAIN]:
-                self.api = self.hass.data[DOMAIN][self.config_entry.entry_id]["api"]
-            else:
-                errors["base"] = "no_api_conf"
-                return self.async_show_form(
-                    step_id="init",
-                    errors=errors,
-                )
-        except KeyError:
-            errors["base"] = "CE_invalid"
-            return self.async_show_form(
-                step_id="init",
-                errors=errors,
-            )
-
-        if user_input is not None:
-            options_data = {
-                "selected_devices": user_input.get("selected_devices", []),
-                CONF_API_SCOPE: user_input.get(CONF_API_SCOPE, DEFAULT_API_SCOPE),
-            }
-            return self.async_create_entry(title="", data=options_data)
+        if (
+            DOMAIN in self.hass.data
+            and self.config_entry.entry_id in self.hass.data[DOMAIN]
+        ):
+            self.api = self.hass.data[DOMAIN][self.config_entry.entry_id]["api"]
+        else:
+            return self.async_abort(reason="no_api_conf")
 
         try:
             response = await self.api.discover_devices()
             if "payload" in response:
-                self.devices = {
+                self.discovered_devices = {
                     device[
                         "id"
                     ]: f"{device.get('name', 'Unknown')} ({device.get('category', 'unknown')})"
@@ -225,28 +223,41 @@ class OptionsFlowHandler(OptionsFlow):
                 }
         except (ValueError, TypeError):
             errors["base"] = "cannot_connect"
-            self.devices = {}
+            discovered_devices = {}
 
-        selected_devices = self.config_entry.options.get("selected_devices", [])
+        existing_devices = self.config_entry.options.get("selected_devices", [])
+        all_devices = {**discovered_devices}
+        default_selected = [
+            device_id for device_id in existing_devices if device_id in all_devices
+        ]
 
-        options_schema = {
-            vol.Optional(
-                "selected_devices", default=selected_devices
-            ): vol.MultipleSelect(self.devices),
-            vol.Optional(
-                CONF_API_SCOPE,
-                default=self.config_entry.options.get(
-                    CONF_API_SCOPE, DEFAULT_API_SCOPE
-                ),
-            ): str,
-        }
+        if user_input is not None:
+            new_selected_devices = user_input.get("selected_devices", [])
+            options_data = {"selected_devices": new_selected_devices}
+            return self.async_create_entry(title="", data=options_data)
+
+        options_schema = vol.Schema(
+            {
+                vol.Optional(
+                    "selected_devices", default=default_selected
+                ): cv.multi_select(all_devices)
+            }
+        )
 
         return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema(options_schema),
-            errors=errors,
+            step_id="select_devices", data_schema=options_schema, errors=errors
         )
+
+    async def async_step_api_reauth_opt(
+        self, user_input: dict[str, vol.Any] | None = None
+    ) -> ConfigFlowResult:
+        """Trigger reauthentication process."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data={})
+
+        return self.async_show_form(step_id="reauth_confirm")
 
 
 class InvalidAuth(HomeAssistantError):
     """Error to indicate there is invalid auth."""
+

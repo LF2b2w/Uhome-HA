@@ -1,9 +1,9 @@
 """API for Uhome bound to Home Assistant OAuth."""
 
 from aiohttp import ClientSession
-from utec_py.auth import AbstractAuth
 
 from homeassistant.helpers import config_entry_oauth2_flow
+from utec_py.auth import AbstractAuth
 
 
 class AsyncConfigEntryAuth(AbstractAuth):
