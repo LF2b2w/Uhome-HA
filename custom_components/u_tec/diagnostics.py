@@ -57,8 +57,6 @@ async def async_get_config_entry_diagnostics(
         "config_entry": async_redact_data(entry.as_dict(), REDACT_KEYS),
         "coordinator_data": {
             "last_update_success": coordinator.last_update_success,
-            "last_update_time": coordinator.last_update_time.isoformat()
-                if coordinator.last_update_time else None,
             "device_count": len(coordinator.devices),
         },
         "devices": async_redact_data(device_data, REDACT_KEYS),
