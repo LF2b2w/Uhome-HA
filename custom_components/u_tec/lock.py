@@ -48,14 +48,14 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        return self._device.available
+        return self.coordinator.last_update_success and self._device.available
 
-    async def async_lock(self, **kwargs: Any) -> None:
+    async def async_lock(self) -> None:
         """Lock the device."""
         await self._device.lock()
         await self.coordinator.async_request_refresh()
 
-    async def async_unlock(self, **kwargs: Any) -> None:
+    async def async_unlock(self) -> None:
         """Unlock the device."""
         await self._device.unlock()
         await self.coordinator.async_request_refresh()

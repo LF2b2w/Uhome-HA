@@ -20,6 +20,6 @@ class AsyncConfigEntryAuth(AbstractAuth):
 
     async def async_get_access_token(self) -> str:
         """Return a valid access token."""
-        if self._oauth_session.valid_token is None:
+        if self._oauth_session.valid_token is None | False:
             await self._oauth_session.async_ensure_token_valid()
         return self._oauth_session.token["access_token"]

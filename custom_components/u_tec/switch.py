@@ -48,7 +48,7 @@ class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        return self._device.available
+        return self.coordinator.last_update_success and self._device.available
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""

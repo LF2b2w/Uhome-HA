@@ -45,6 +45,11 @@ class UhomeDoorSensor(CoordinatorEntity, BinarySensorEntity):
         self._attr_device_info = self._device.device_info
 
     @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        return self.coordinator.last_update_success and self._device.available
+
+    @property
     def is_on(self) -> bool | None:
         """Return true if the door is open."""
         return (

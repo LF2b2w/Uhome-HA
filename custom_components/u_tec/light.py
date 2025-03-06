@@ -54,6 +54,11 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
             self._attr_supported_color_modes.add(ColorMode.COLOR_TEMP)
 
     @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        return self.coordinator.last_update_success and self._device.available
+
+    @property
     def is_on(self) -> bool:
         """Return true if light is on."""
         return self._device.is_on

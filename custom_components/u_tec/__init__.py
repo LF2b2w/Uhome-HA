@@ -15,10 +15,10 @@ from .coordinator import UhomeDataUpdateCoordinator
 
 _PLATFORMS: list[Platform] = [Platform.LOCK, Platform.LIGHT, Platform.SWITCH]
 
-type UhomeConfigEntry = ConfigEntry[api.AsyncConfigEntryAuth]
+# type UhomeConfigEntry = ConfigEntry[api.AsyncConfigEntryAuth]
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: UhomeConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Uhome from a config entry."""
     implementation = (
         await config_entry_oauth2_flow.async_get_config_entry_implementation(
@@ -28,11 +28,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: UhomeConfigEntry) -> boo
 
     session = config_entry_oauth2_flow.OAuth2Session(hass, entry, implementation)
 
-    entry.runtime_data = api.AsyncConfigEntryAuth(
+    auth_data = api.AsyncConfigEntryAuth(
         aiohttp_client.async_get_clientsession(hass), session
     )
 
-    Uhomeapi = UHomeApi(entry.runtime_data)
+    Uhomeapi = UHomeApi(auth_data)
 
     coordinator = UhomeDataUpdateCoordinator(hass, Uhomeapi)
     await coordinator.async_config_entry_first_refresh()
@@ -40,6 +40,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: UhomeConfigEntry) -> boo
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "api": Uhomeapi,
         "coordinator": coordinator,
+        "auth_data": auth_data,
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
@@ -47,6 +48,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: UhomeConfigEntry) -> boo
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: UhomeConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     return await hass.config_entries.async_unload_platforms(entry, _PLATFORMS)
