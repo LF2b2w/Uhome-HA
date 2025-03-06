@@ -14,7 +14,7 @@ from utec_py.devices.device import BaseDevice
 from utec_py.devices.light import Light
 from utec_py.devices.lock import Lock
 from utec_py.devices.switch import Switch
-from utec_py.exceptions import ApiError, AuthenticationError
+from utec_py.exceptions import ApiError, AuthenticationError, DeviceError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -84,7 +84,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     try:
                         await self.devices[device_id].update()
                         _LOGGER.debug("Successfully updated data for %s devices", len(self.devices))
-                    except ValueError as err:
+                    except DeviceError as err:
                         _LOGGER.error("Error updating device %s: %s", device_id, err)
                     
                 
