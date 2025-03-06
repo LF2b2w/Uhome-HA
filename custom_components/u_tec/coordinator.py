@@ -76,6 +76,10 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                         continue
 
                     self.devices[device_id] = device
+                    try:
+                        await device.update()  # Immediately get state data
+                    except DeviceError as err:
+                        _LOGGER.error("Error updating new device %s: %s", device_id, err)
                 else:
                     _LOGGER.debug("Updating existing device: %s", device_id)
                     # Update device state
