@@ -42,6 +42,6 @@ class UhomeBatterySensorEntity(CoordinatorEntity, SensorEntity):
         self._attr_device_info = self._device.device_info
 
     @property
-    def battery_level(self) -> int | None:
+    def native_value(self) -> int | None:
         """Return battery level."""
-        return self.battery_level
+        return self._device.battery_level

@@ -7,7 +7,8 @@
   ],
   "config_flow": true,
   "dependencies": [
-    "application_credentials"
+    "application_credentials",
+    "diagnostics"
   ],
   "documentation": "https://github.com/LF2b2w/Uhome-HA",
   "issue_tracker": "https://github.com/LF2b2w/Uhome-HA/issues",

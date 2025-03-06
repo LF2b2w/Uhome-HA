@@ -2,13 +2,11 @@
 
 from datetime import timedelta
 import logging
-from turtle import update
-
-from voluptuous import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+
 from utec_py.api import UHomeApi
 from utec_py.devices.device import BaseDevice
 from utec_py.devices.light import Light
