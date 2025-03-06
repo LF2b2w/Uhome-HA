@@ -41,9 +41,10 @@ class UhomeOAuth2FlowHandler(
     def __init__(self) -> None:
         """Initialize Uhome OAuth2 flow."""
         super().__init__()
-        self._client_id: str | None
-        self._client_secret: str | None
-        self._api_scope: str | None
+        self._client_id = None
+        self._client_secret = None
+        self._api_scope = None
+        self.data = {}
 
     @property
     def logger(self) -> logging.Logger:
@@ -62,7 +63,7 @@ class UhomeOAuth2FlowHandler(
 
         if user_input is not None:
             # Save client credentials and api_scope to be used later.
-            await self.async_set_unique_id(user_input["client_id"])
+            await self.async_set_unique_id(user_input[CONF_CLIENT_ID])
             self._abort_if_unique_id_configured()
 
             self._client_id = user_input[CONF_CLIENT_ID]
@@ -73,10 +74,27 @@ class UhomeOAuth2FlowHandler(
                 "Retrieved client credentials, starting oauth authentication"
             )
 
-            # Store client credentials for later use
+            # Store client credentials in the flow data for later use
+            self.data = {
+                "client_id": self._client_id,
+                "client_secret": self._client_secret,
+                "api_scope": self._api_scope,
+            }
+
+            # Create and register the implementation
+            self.flow_impl = config_entry_oauth2_flow.LocalOAuth2Implementation(
+                self.hass,
+                DOMAIN,
+                self._client_id,
+                self._client_secret,
+                OAUTH2_AUTHORIZE,
+                OAUTH2_TOKEN,
+            )
+
+            # Register the implementation
             self.async_register_implementation(
                 self.hass,
-                await self._get_oauth2_implementation(),
+                self.flow_impl,
             )
 
             return await self.async_step_pick_implementation()
@@ -101,9 +119,8 @@ class UhomeOAuth2FlowHandler(
     ) -> config_entries.FlowResult:
         """Create the config entry after successful OAuth2 authentication."""
         self.logger.debug(
-            "Registering OAuth2 implementation with client_id=%s and client_secret=%s",
+            "Creating OAuth2 config entry with client_id=%s",
             self._client_id,
-            self._client_secret,
         )
         return self.async_create_entry(
             title="Uhome Integration",
@@ -156,16 +173,6 @@ class UhomeOAuth2FlowHandler(
 
         if config_entry.version == 1:
             pass
-
-            # new_data = {**config_entry.data}
-            # if config_entry.minor_version < 2:
-            # modify Config Entry data with changes in version 1.2
-            #    pass
-            # if config_entry.minor_version < 3:
-            # modify Config Entry data with changes in version 1.3
-            #    pass
-
-            # hass.config_entries.async_update_entry(config_entry, data=new_data, minor_version=3, version=1)
 
         _LOGGER.debug(
             "Migration to configuration version %s.%s successful",

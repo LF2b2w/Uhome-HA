@@ -25,18 +25,6 @@ async def async_setup(hass: HomeAssistant, config):
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Uhome from a config entry."""
-    config_entry_oauth2_flow.register_oauth2_implementation(
-        hass,
-        DOMAIN,
-        config_entry_oauth2_flow.LocalOAuth2Implementation(
-            hass,
-            DOMAIN,
-            entry.data[CONF_CLIENT_ID],
-            entry.data[CONF_CLIENT_SECRET],
-            OAUTH2_AUTHORIZE,
-            OAUTH2_TOKEN,
-        ),
-    )
     implementation = (
         await config_entry_oauth2_flow.async_get_config_entry_implementation(
             hass, entry
