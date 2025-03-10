@@ -14,7 +14,7 @@
   "issue_tracker": "https://github.com/LF2b2w/Uhome-HA/issues",
   "iot_class": "cloud_polling",
   "requirements": [
-    "utec_py_LF2b2w==0.1.19"
+    "utec_py_LF2b2w==0.1.20"
   ],
   "integration_type": "hub"
 }
