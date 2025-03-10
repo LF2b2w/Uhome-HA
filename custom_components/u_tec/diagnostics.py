@@ -39,6 +39,7 @@ async def async_get_config_entry_diagnostics(
 
     # Collect device data
     device_data = {}
+    query_data = {}
     for device_id, device in coordinator.devices.items():
         device_data[device_id] = {
             "name": device.name,
@@ -52,6 +53,14 @@ async def async_get_config_entry_diagnostics(
             "state_data": device.get_state_data(),
         }
 
+    # Collect query responses for each device
+    for device_id, device in coordinator.devices.items():
+        try:
+            device_query_data = await api.query_device(device_id)
+            query_data[device_id] = device_query_data
+        except Exception as err:
+            query_data[device_id] = {"error": str(err)}
+
     # Build diagnostics data
     diagnostics_data = {
         "config_entry": async_redact_data(entry.as_dict(), REDACT_KEYS),
@@ -61,6 +70,7 @@ async def async_get_config_entry_diagnostics(
         },
         "devices": async_redact_data(device_data, REDACT_KEYS),
         "discovery_data": async_redact_data(discovery_data, REDACT_KEYS),
+        "query_data": async_redact_data(query_data, REDACT_KEYS),
     }
 
     return diagnostics_data

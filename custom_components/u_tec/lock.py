@@ -29,12 +29,13 @@ async def async_setup_entry(
     )
 
 
-class UhomeLockEntity(CoordinatorEntity, LockEntity):
+class UhomeLockEntity(CoordinatorEntity, LockEntity, UhomeLock):
     """Representation of a Uhome lock."""
 
     def __init__(self, coordinator: UhomeDataUpdateCoordinator, device_id: str) -> None:
         """Initialize the lock."""
         super().__init__(coordinator)
+        self._lock = UhomeLock
         self._device = coordinator.devices[device_id]
         self._attr_unique_id = f"{DOMAIN}_{device_id}"
         self._attr_name = self._device.name
@@ -52,10 +53,10 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
 
     async def async_lock(self) -> None:
         """Lock the device."""
-        await self._device.lock()
+        await self._lock.lock(self)
         await self.coordinator.async_request_refresh()
 
     async def async_unlock(self) -> None:
         """Unlock the device."""
-        await self._device.unlock()
+        await self._lock.unlock(self)
         await self.coordinator.async_request_refresh()

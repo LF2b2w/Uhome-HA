@@ -67,6 +67,9 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     elif "switch" in handle_type.lower():
                         _LOGGER.info("Adding new switch device: %s", device_id)
                         device = Switch(device_data, self.api)
+                    elif "dimmer" in handle_type.lower():
+                        _LOGGER.info("Adding new light device: %s", device_id)
+                        device = Light(device_data, self.api)
                     else:
                         _LOGGER.debug(
                             "Skipping device %s with unsupported handle type: %s",
