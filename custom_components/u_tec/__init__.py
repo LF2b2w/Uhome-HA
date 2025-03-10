@@ -34,8 +34,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         aiohttp_client.async_get_clientsession(hass), session
     )
 
-    if not await auth_data.validate_credentials():
-        raise ConfigEntryAuthFailed
+    #if not await auth_data.validate_credentials():
+    #    raise ConfigEntryAuthFailed
 
     Uhomeapi = UHomeApi(auth_data)
 

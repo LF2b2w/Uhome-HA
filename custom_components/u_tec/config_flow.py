@@ -2,6 +2,7 @@
 
 import logging
 
+from custom_components.u_tec import application_credentials
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -10,7 +11,7 @@ from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
 from homeassistant.core import _LOGGER, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_entry_oauth2_flow
-from homeassistant.components.application_credentials import ClientCredential
+from homeassistant.components.application_credentials import ClientCredential, ApplicationCredentialsProtocol
 import homeassistant.helpers.config_validation as cv
 from homeassistant.util import Mapping
 
@@ -42,8 +43,6 @@ class UhomeOAuth2FlowHandler(
     def __init__(self) -> None:
         """Initialize Uhome OAuth2 flow."""
         super().__init__()
-        #self._client_id = None
-        #self._client_secret = None
         self._api_scope = None
         self.data = {}
 
@@ -113,29 +112,25 @@ class UhomeOAuth2FlowHandler(
 
         #return self.async_show_form(step_id="user", data_schema=STEP_USER_DATA_SCHEMA)
 
-    async def async_oauth_create_entry(
-        self, data: dict[str, vol.Any]
-    ) -> config_entries.FlowResult:
-        """Create the config entry after successful OAuth2 authentication."""
-        self.logger.debug(
-            "Creating OAuth2 config entry for u-tec",)
-        await self.hass.async_add_executor_job(
-            self.hass.data["application_credentials"].async_client_credentials,
-            DOMAIN,
-            #ClientCredential(
-            #    self._client_id,
-            #    self._client_secret
-            #)
-        )
+    #async def async_oauth_create_entry(
+    #    self, data: dict[str, vol.Any]
+    #) -> config_entries.FlowResult:
+    #    """Create the config entry after successful OAuth2 authentication."""
+    #    self.logger.debug(
+    #        "Creating OAuth2 config entry for u-tec",)
+    #    await self.hass.async_add_executor_job(
+    #        self.hass.data["application_credentials"].async_client_credentials,
+    #        DOMAIN,
+    #    )
 
-        return self.async_create_entry(
-            title="Uhome Integration",
-            data={
-                "auth_implementation": DOMAIN,
-                "token": data["token"],
-                "api_scope": self.data[CONF_API_SCOPE],
-            },
-        )
+    #    return self.async_create_entry(
+    #        title="Uhome Integration",
+    #        data={
+    #            "auth_implementation": DOMAIN,
+    #            "token": data["token"],
+    #            "api_scope": self.data[CONF_API_SCOPE],
+    #        },
+    #    )
 
     @staticmethod
     @callback
