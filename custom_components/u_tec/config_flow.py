@@ -134,7 +134,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             step_id="device_selection",
             data_schema=vol.Schema({
                 vol.Optional(
-                    "selected_devices",
+                    "Select devices you want to enable in HomeAssistant:",
                     default=current_selection
                 ): cv.multi_select(self.devices)
             })

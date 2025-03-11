@@ -2,9 +2,10 @@
 
 from utec_py.devices.lock import Lock as UhomeLock
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.const import PERCENTAGE
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -21,17 +22,21 @@ async def async_setup_entry(
     coordinator: UhomeDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
     # Add battery sensors for locks that have them
-    async_add_entities(
-        UhomeBatterySensorEntity(coordinator, device_id)
-        for device_id, device in coordinator.devices.items()
-        if isinstance(device, UhomeLock)
-    )
+    entities = []
+    UhomeBatterySensorEntity(coordinator, device_id)
+    for device_id, device in coordinator.devices.items():
+        if hasattr(device, 'has_capability') and device.has_capability("st.batteryLevel"):
+            entities.append(UhomeBatterySensorEntity(coordinator, device_id))
+    
+    async_add_entities(entities)
 
 
 class UhomeBatterySensorEntity(CoordinatorEntity, SensorEntity):
     """Representation of a Uhome battery sensor."""
 
     _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, coordinator: UhomeDataUpdateCoordinator, device_id: str) -> None:
         """Initialize the battery sensor."""
@@ -42,11 +47,11 @@ class UhomeBatterySensorEntity(CoordinatorEntity, SensorEntity):
         self._attr_device_info = self._device.device_info
 
     @property
-    def battery_level(self) -> int | None:
+    def native_value(self) -> int | None:
         """Return battery level."""
         return self._device.battery_level
     
     @property
-    def battery_status(self) -> str | None:
-        """Return battery status."""
+    def extra_state_attributes(self) -> str | None:
+        """Return additional state attributes."""
         return self._device.battery_status
