@@ -64,7 +64,6 @@ class UhomeOAuth2FlowHandler(
         if user_input is not None:
             self.data=user_input
             return await self.async_step_pick_implementation()
-        #return await super().async_step_user
         
         errors={}
 
@@ -73,64 +72,6 @@ class UhomeOAuth2FlowHandler(
             data_schema=STEP_USER_DATA_SCHEMA,
             errors=errors
         )
-            # Save client credentials and api_scope to be used later.
-            #await self.async_set_unique_id(user_input[CONF_CLIENT_ID])
-            #self._abort_if_unique_id_configured()
-
-            #self._client_id = user_input[CONF_CLIENT_ID]
-            #self._client_secret = user_input[CONF_CLIENT_SECRET]
-            #self._api_scope = user_input.get(CONF_API_SCOPE, DEFAULT_API_SCOPE)
-
-            #self.logger.debug(
-            #    "Retrieved client credentials, starting oauth authentication"
-            #)
-
-            # Store client credentials in the flow data for later use
-            #self.data = {
-            #    "client_id": self._client_id,
-            #    "client_secret": self._client_secret,
-            #    "api_scope": self._api_scope,
-            #}
-
-            # Create and register the implementation
-            #self.flow_impl = config_entry_oauth2_flow.LocalOAuth2Implementation(
-            #    self.hass,
-            #    DOMAIN,
-            #    self._client_id,
-            #    self._client_secret,
-            #    OAUTH2_AUTHORIZE,
-            #    OAUTH2_TOKEN,
-            #)
-
-            # Register the implementation
-            #self.async_register_implementation(
-            #    self.hass,
-            #    self.flow_impl,
-            #)
-
-            
-
-        #return self.async_show_form(step_id="user", data_schema=STEP_USER_DATA_SCHEMA)
-
-    #async def async_oauth_create_entry(
-    #    self, data: dict[str, vol.Any]
-    #) -> config_entries.FlowResult:
-    #    """Create the config entry after successful OAuth2 authentication."""
-    #    self.logger.debug(
-    #        "Creating OAuth2 config entry for u-tec",)
-    #    await self.hass.async_add_executor_job(
-    #        self.hass.data["application_credentials"].async_client_credentials,
-    #        DOMAIN,
-    #    )
-
-    #    return self.async_create_entry(
-    #        title="Uhome Integration",
-    #        data={
-    #            "auth_implementation": DOMAIN,
-    #            "token": data["token"],
-    #            "api_scope": self.data[CONF_API_SCOPE],
-    #        },
-    #    )
 
     @staticmethod
     @callback
@@ -160,8 +101,8 @@ class UhomeOAuth2FlowHandler(
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow with proper device discovery."""
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        self.config_entry = config_entry
+    def __init__(self) -> None:
+        #self.config_entry = ConfigEntry
         self.api = None
         self.devices = {}
 

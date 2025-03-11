@@ -88,8 +88,8 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
         if ATTR_BRIGHTNESS in kwargs:
             brightness = int(kwargs[ATTR_BRIGHTNESS] / 2.55)
 
-        if ATTR_RGB_COLOR in kwargs:
-            await self._device.set_rgb_color(*kwargs[ATTR_RGB_COLOR])
+        #if ATTR_RGB_COLOR in kwargs:
+        #    await self._device.set_rgb_color(*kwargs[ATTR_RGB_COLOR])
 
         await self._device.turn_on(brightness=brightness)
         await self.coordinator.async_request_refresh()
