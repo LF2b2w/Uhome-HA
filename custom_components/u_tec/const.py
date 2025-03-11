@@ -9,3 +9,5 @@ CONF_API_SCOPE = "scope"
 DEFAULT_API_SCOPE = "openapi"
 
 API_BASE_URL = "https://api.u-tec.com/action"
+
+SIGNAL_NEW_DEVICE = f"{DOMAIN}_new_device"

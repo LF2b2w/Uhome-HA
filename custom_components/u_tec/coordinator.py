@@ -3,9 +3,11 @@
 from datetime import timedelta
 import logging
 
+from custom_components.u_tec.const import SIGNAL_NEW_DEVICE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from utec_py.api import UHomeApi
 from utec_py.devices.device import BaseDevice
@@ -30,6 +32,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         )
         self.api = api
         self.devices: dict[str, BaseDevice] = {}
+        self.added_sensor_entities = set()
         _LOGGER.info("Uhome data coordinator initialized")
 
     async def _async_update_data(self) -> None:
@@ -81,6 +84,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     self.devices[device_id] = device
                     try:
                         await device.update()  # Immediately get state data
+                        async_dispatcher_send(self.hass, SIGNAL_NEW_DEVICE)
                     except DeviceError as err:
                         _LOGGER.error("Error updating new device %s: %s", device_id, err)
                 else:
