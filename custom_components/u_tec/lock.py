@@ -46,7 +46,7 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        return self.coordinator.last_update_success | self._device.available
+        return self.coordinator.last_update_success and self._device.available
 
     @property
     def is_locked(self) -> bool:
@@ -66,13 +66,22 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
     @property
     def extra_state_attributes(self) -> dict[str, any]:
         """Return the state attributes of the lock."""
-        return {
-            "lock_state": self._device.lock_state,
-            "door_state": self._device.door_state,
-            "lock_mode": self._device.lock_mode
-            if self._device.has_door_sensor
-            else None,
+        # Get values and ensure they're not sequences
+        lock_state = self._device.lock_state
+        door_state = self._device.door_state
+
+        # Only include lock_mode if has_door_sensor is True
+        attributes = {
+            "lock_state": str(lock_state) if lock_state is not None else None,
+            "door_state": str(door_state) if door_state is not None else None,
         }
+
+        # Add lock_mode conditionally
+        if self._device.has_door_sensor:
+            lock_mode = self._device.lock_mode
+            attributes["lock_mode"] = str(lock_mode) if lock_mode is not None else None
+
+        return attributes
 
     async def async_lock(self) -> None:
         """Lock the device."""

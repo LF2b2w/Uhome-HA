@@ -86,11 +86,6 @@ class UhomeBatterySensorEntity(CoordinatorEntity, SensorEntity):
         """Return device state class."""
         return self._attr_state_class
 
-    @property
-    def extra_state_attributes(self) -> str | None:
-        """Return additional state attributes."""
-        return self._device.battery_status
-
     async def async_update(self) -> None:
         """Update device information."""
         await self._device.update()
