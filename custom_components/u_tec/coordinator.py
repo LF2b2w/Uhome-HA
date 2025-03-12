@@ -4,11 +4,11 @@ from datetime import timedelta
 import logging
 
 from custom_components.u_tec.const import SIGNAL_NEW_DEVICE
+
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from utec_py.api import UHomeApi
 from utec_py.devices.device import BaseDevice
 from utec_py.devices.light import Light
@@ -39,10 +39,6 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         """Fetch data from API endpoint."""
         _LOGGER.debug("Updating Uhome device data")
         try:
-            # Validate authentication first
-            # if not await self.api.validate_auth():
-            #    raise ConfigEntryAuthFailed("Invalid authentication")
-
             # Discover devices
             _LOGGER.debug("Discovering Uhome devices")
             discovery_data = await self.api.discover_devices()
@@ -86,17 +82,21 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                         await device.update()  # Immediately get state data
                         async_dispatcher_send(self.hass, SIGNAL_NEW_DEVICE)
                     except DeviceError as err:
-                        _LOGGER.error("Error updating new device %s: %s", device_id, err)
+                        _LOGGER.error(
+                            "Error updating new device %s: %s", device_id, err
+                        )
                 else:
                     _LOGGER.debug("Updating existing device: %s", device_id)
                     # Update device state
                     try:
                         await self.devices[device_id].update()
-                        _LOGGER.debug("Successfully updated data for %s devices", len(self.devices))
+                        _LOGGER.debug(
+                            "Successfully updated data for %s devices",
+                            len(self.devices),
+                        )
                     except DeviceError as err:
                         _LOGGER.error("Error updating device %s: %s", device_id, err)
-                    
-                
+
             return {
                 device_id: device.get_state_data()
                 for device_id, device in self.devices.items()
@@ -105,6 +105,6 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         except AuthenticationError as err:
             raise ConfigEntryAuthFailed from err
         except ApiError as err:
-            raise UpdateFailed("Error communicating with API: {err}") from err
+            raise UpdateFailed(f"Error communicating with API: {err}") from err
         except ValueError as err:
-            raise UpdateFailed("Unexpected error updating data: %s", err)
+            raise UpdateFailed(f"Unexpected error updating data: {err}") from err

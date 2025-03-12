@@ -2,31 +2,22 @@
 
 import logging
 
-from custom_components.u_tec import application_credentials
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigEntry, ConfigFlowResult, OptionsFlow
+from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
 from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
 from homeassistant.core import _LOGGER, HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_entry_oauth2_flow
-from homeassistant.components.application_credentials import ClientCredential, ApplicationCredentialsProtocol
 import homeassistant.helpers.config_validation as cv
 from homeassistant.util import Mapping
 
-from .const import (
-    CONF_API_SCOPE,
-    DEFAULT_API_SCOPE,
-    DOMAIN,
-    OAUTH2_AUTHORIZE,
-    OAUTH2_TOKEN,
-)
+from .const import CONF_API_SCOPE, DEFAULT_API_SCOPE, DOMAIN
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
-        #vol.Required(CONF_CLIENT_ID): str,
-        #vol.Required(CONF_CLIENT_SECRET): str,
+        # vol.Required(CONF_CLIENT_ID): str,
+        # vol.Required(CONF_CLIENT_SECRET): str,
         vol.Optional(CONF_API_SCOPE, default=DEFAULT_API_SCOPE): str,
     }
 )
@@ -62,15 +53,13 @@ class UhomeOAuth2FlowHandler(
             return self.async_abort(reason="single_instance_allowed")
 
         if user_input is not None:
-            self.data=user_input
+            self.data = user_input
             return await self.async_step_pick_implementation()
-        
-        errors={}
+
+        errors = {}
 
         return self.async_show_form(
-            step_id="user",
-            data_schema=STEP_USER_DATA_SCHEMA,
-            errors=errors
+            step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
 
     @staticmethod
@@ -99,10 +88,13 @@ class UhomeOAuth2FlowHandler(
 
         return await self.async_step_user()
 
+
 class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow with proper device discovery."""
+
     def __init__(self) -> None:
-        #self.config_entry = ConfigEntry
+        """Initialise OptionsFlowHandler."""
+        # self.config_entry = ConfigEntry
         self.api = None
         self.devices = {}
 
@@ -112,10 +104,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             self.api = self.hass.data[DOMAIN][self.config_entry.entry_id]["api"]
             response = await self.api.discover_devices()
             self.devices = {
-                device["id"]: f"{device.get('name', 'Unknown')} ({device.get('category', 'unknown')})"
+                device[
+                    "id"
+                ]: f"{device.get('name', 'Unknown')} ({device.get('category', 'unknown')})"
                 for device in response.get("payload", {}).get("devices", [])
             }
-        except Exception as err:
+        except ValueError as err:
             return self.async_abort(reason=f"discovery_failed: {err}")
 
         return await self.async_step_device_selection()
@@ -126,23 +120,25 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         if user_input:
             return self.async_create_entry(
-                title="",
-                data={"devices": user_input["selected_devices"]}
+                title="", data={"devices": user_input["selected_devices"]}
             )
 
         return self.async_show_form(
             step_id="device_selection",
-            data_schema=vol.Schema({
-                vol.Optional(
-                    "Select devices you want to enable in HomeAssistant:",
-                    default=current_selection
-                ): cv.multi_select(self.devices)
-            })
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        "Select devices you want to enable in HomeAssistant:",
+                        default=current_selection,
+                    ): cv.multi_select(self.devices)
+                }
+            ),
         )
 
     async def async_step_api_reauth_opt(self, user_input=None) -> ConfigFlowResult:
         """Handle API reauthentication option."""
         return await self.async_step_user()
+
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Migrate old config entries to current version."""
@@ -152,9 +148,6 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         new_data.pop(CONF_CLIENT_SECRET, None)
         new_data.pop(CONF_CLIENT_ID, None)
         hass.config_entries.async_update_entry(
-            config_entry,
-            data=new_data,
-            version=2,
-            minor_version=1
+            config_entry, data=new_data, version=2, minor_version=1
         )
     return True
