@@ -6,15 +6,15 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from utec_py.devices.device_const import DeviceCapability
 
-from .const import DOMAIN, SIGNAL_NEW_DEVICE
+from .const import DOMAIN, SIGNAL_DEVICE_UPDATE, SIGNAL_NEW_DEVICE
 from .coordinator import UhomeDataUpdateCoordinator
-
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -70,6 +70,7 @@ class UhomeBatterySensorEntity(CoordinatorEntity, SensorEntity):
         self._attr_device_info = self._device.device_info
         self._attr_device_class = SensorDeviceClass.BATTERY
         self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_native_unit_of_measurement = PERCENTAGE
 
     @property
     def native_value(self) -> int | None:
@@ -89,3 +90,21 @@ class UhomeBatterySensorEntity(CoordinatorEntity, SensorEntity):
     async def async_update(self) -> None:
         """Update device information."""
         await self._device.update()
+
+    async def async_added_to_hass(self):
+        """Register callbacks."""
+        await super().async_added_to_hass()
+
+        # Register update callback for push notifications
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                f"{SIGNAL_DEVICE_UPDATE}_{self._device.device_id}",
+                self._handle_push_update(),
+            )
+        )
+
+    @callback
+    def _handle_push_update(self):
+        """Update device from push data."""
+        self.async_write_ha_state()

@@ -95,6 +95,10 @@ async def async_get_config_entry_diagnostics(
             query_data[device_id] = device_query_data
         except ValueError as err:
             query_data[device_id] = {"error": str(err)}
+        except ConnectionError as err:
+            query_data = {"error": f"Connection error: {err!s}"}
+        except TimeoutError as err:
+            query_data = {"error": f"Timeout error: {err!s}"}
 
     # Build diagnostics data
     diagnostics_data = {

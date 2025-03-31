@@ -3,7 +3,7 @@
 from datetime import timedelta
 import logging
 
-from custom_components.u_tec.const import SIGNAL_NEW_DEVICE
+from custom_components.u_tec.const import SIGNAL_DEVICE_UPDATE, SIGNAL_NEW_DEVICE
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -33,6 +33,8 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         self.api = api
         self.devices: dict[str, BaseDevice] = {}
         self.added_sensor_entities = set()
+        self.push_devices = []
+        self.blacklisted_devices = []
         _LOGGER.info("Uhome data coordinator initialized")
 
     async def _async_update_data(self) -> None:
@@ -108,3 +110,67 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"Error communicating with API: {err}") from err
         except ValueError as err:
             raise UpdateFailed(f"Unexpected error updating data: {err}") from err
+
+    async def update_push_data(self, push_data):
+        """Process push update from webhook."""
+
+        _LOGGER.debug("Processing push update: %s", push_data)
+
+        try:
+            # Check if the data has the expected structure
+            if (
+                "payload" in push_data
+                and "devices" in push_data["payload"]
+                and isinstance(push_data["payload"]["devices"], list)
+            ):
+                devices_data = push_data["payload"]["devices"]
+
+                for device_data in devices_data:
+                    device_id = device_data.get("id")
+
+                    if not device_id:
+                        _LOGGER.warning("Device ID missing in push update")
+                        continue
+
+                    # Check if this device should receive push updates
+                    if self.push_devices and device_id not in self.push_devices:
+                        _LOGGER.debug(
+                            "Skipping push update for device %s (not in selected devices)",
+                            device_id,
+                        )
+                        continue
+
+                    if device_id in self.devices:
+                        # Get the device instance
+                        device = self.devices[device_id]
+
+                        # Update the device's state data directly
+                        # The format matches what the device expects
+                        await device.update_state_data(device_data)
+
+                        _LOGGER.debug(
+                            "Updated device %s with push data: %s",
+                            device_id,
+                            device_data,
+                        )
+
+                        # Notify listeners that the device has been updated
+                        _LOGGER.debug("Dispatching update for device: %s", device_id)
+                        async_dispatcher_send(
+                            self.hass,
+                            f"{SIGNAL_DEVICE_UPDATE}_{device_id}",
+                            device.get_state_data(),
+                        )
+                    else:
+                        _LOGGER.debug(
+                            "Received update for unknown device: %s", device_id
+                        )
+
+                # Trigger data update for all entities
+                self.async_set_updated_data(self.data)
+
+            else:
+                _LOGGER.warning("Unexpected push data format: %s", push_data)
+
+        except (ValueError, TypeError, AttributeError) as err:
+            _LOGGER.error("Error processing push update: %s", err)

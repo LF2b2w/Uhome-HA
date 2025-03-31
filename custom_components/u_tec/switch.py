@@ -4,14 +4,15 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import _LOGGER, HomeAssistant
+from homeassistant.core import _LOGGER, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from utec_py.devices.switch import Switch as UhomeSwitch
 from utec_py.exceptions import DeviceError
 
-from .const import DOMAIN
+from .const import DOMAIN, SIGNAL_DEVICE_UPDATE
 from .coordinator import UhomeDataUpdateCoordinator
 
 
@@ -75,3 +76,21 @@ class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
                 "Failed to turn off switch %s: %s", self._device.device_id, err
             )
             raise HomeAssistantError(f"Failed to turn off switch: {err}") from err
+
+    async def async_added_to_hass(self):
+        """Register callbacks."""
+        await super().async_added_to_hass()
+
+        # Register update callback for push notifications
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                f"{SIGNAL_DEVICE_UPDATE}_{self._device.device_id}",
+                self._handle_push_update(),
+            )
+        )
+
+    @callback
+    def _handle_push_update(self):
+        """Update device from push data."""
+        self.async_write_ha_state()
