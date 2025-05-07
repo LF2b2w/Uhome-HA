@@ -1,15 +1,16 @@
 """API for Uhome bound to Home Assistant OAuth."""
 
 import logging
-from urllib.parse import urlparse
+from xml.dom import ValidationErr
 
 from aiohttp import ClientSession
 
 from homeassistant.components import webhook
+from homeassistant.helpers import network
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_entry_oauth2_flow
 from utec_py.api import AbstractAuth, UHomeApi
-from utec_py.exceptions import ApiError, UHomeError
+from utec_py.exceptions import ApiError, UHomeError, ValidationError
 
 from .const import DOMAIN, WEBHOOK_HANDLER, WEBHOOK_ID_PREFIX
 
@@ -49,17 +50,18 @@ class AsyncPushUpdateHandler:
 
     async def async_register_webhook(self, auth_data) -> bool:
         """Register webhook with Home Assistant and the Uhome API."""
-
-        # Generate webhook URL
-        webhook_url = webhook.async_generate_url(self.hass, self.webhook_id)
-
+        
         # Get the external URL
-        external_url = self.hass.config.external_url
+        external_url = network.get_url(self.hass, prefer_external=True)
         if not external_url:
             _LOGGER.error(
                 "External URL not configured, push notifications will not work"
             )
             return False
+        if external_url:
+            webhook_url = webhook.async_generate_url(self.hass, self.webhook_id)
+        else:
+            raise ValidationError
 
         # Register the webhook with the API
         access_token = await auth_data.async_get_access_token()

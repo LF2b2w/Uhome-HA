@@ -2,8 +2,10 @@
     "config": {
         "step": {
             "user": {
+                "menu_options": {
                 "title": "Connect to Your Service",
                 "description": "Please set up Your Integration"
+                }
             }
         },
         "abort": {

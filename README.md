@@ -3,20 +3,18 @@
 A Home Assistant integration for U-Tec smart home devices via the Uhome API that allows you to control your locks, lights, switches, and sensors through Home Assistant.
 
 ## Features
-- OAuth2 authentication support
-- Real-time device state updates (Coming soon)
 - Secure API communication
 - Supports multiple U-tec device types:
-    - Locks (Including door sensor)
+    - Locks
     - Lights
     - Switches
 
 ## Installation
 ### HACS (Recommended)
 Open HACS in your Home Assistant instance\
-Click on "Integrations"\
-Click the "+" button\
-Search for "Uhome"\
+Click add custom repo\
+Paste the URL of this repo and type integration\
+Search for "U-tec"\
 Click "Install"
 
 ### Manual Installation
