@@ -13,7 +13,7 @@ A Home Assistant integration for U-Tec smart home devices via the Uhome API that
 ### HACS (Recommended)
 Open HACS in your Home Assistant instance\
 Click add custom repo\
-Paste the URL of this repo and type integration\
+Paste the URL of this repo and choose type integration\
 Search for "U-tec"\
 Click "Install"
 
@@ -25,7 +25,7 @@ Restart Home Assistant
 ## Configuration
 In Home Assistant, go to Configuration > Integrations\
 Click the "+" button to add a new integration\
-Search for "Uhome"\
+Search for "U-Tec"\
 You will need to provide:
 - Client ID
 - Client Secret
