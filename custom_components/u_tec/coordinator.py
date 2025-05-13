@@ -37,7 +37,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         self.blacklisted_devices = []
         _LOGGER.info("Uhome data coordinator initialized")
 
-    async def _async_update_data(self) -> None:
+    async def _async_update_data(self) -> dict[str, dict]:
         """Fetch data from API endpoint."""
         _LOGGER.debug("Updating Uhome device data")
         try:
@@ -103,7 +103,6 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                 device_id: device.get_state_data()
                 for device_id, device in self.devices.items()
             }
-
         except AuthenticationError as err:
             raise ConfigEntryAuthFailed from err
         except ApiError as err:

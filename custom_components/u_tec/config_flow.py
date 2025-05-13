@@ -1,6 +1,7 @@
 """Config flow for Uhome."""
 
 import logging
+from typing import Any
 
 import voluptuous as vol
 
@@ -33,6 +34,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 
 _LOGGER = logging.getLogger(__name__)
 
+
 class UhomeOAuth2FlowHandler(
     config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domain=DOMAIN
 ):
@@ -53,7 +55,7 @@ class UhomeOAuth2FlowHandler(
         return _LOGGER
 
     @property
-    def extra_authorize_data(self) -> dict[str, vol.Any]:
+    def extra_authorize_data(self) -> dict[str, Any]:
         """Extra data that needs to be appended to the authorize url."""
         return {"scope": self._api_scope or DEFAULT_API_SCOPE}
 
@@ -125,10 +127,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         self.devices = {}
         self.config_entry = config_entry
         self.options = dict(config_entry.options)
-    
 
     async def async_step_init(
-        self, user_input: dict[str, any] | None = None
+        self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Initialize options flow."""
         return self.async_show_menu(
@@ -138,7 +139,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         )
 
     async def async_step_update_push(
-        self, user_input: dict[str, any] | None = None
+        self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Select devices for push updates."""
 
@@ -163,7 +164,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         )
 
     async def async_step_push_device_selection(
-        self, user_input: dict[str, any] | None = None
+        self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle device selection step."""
         if user_input is not None:
@@ -199,7 +200,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         )
 
     async def async_step_get_devices(
-        self, user_input: dict[str, any] | None = None
+        self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Retrieve all devices from api."""
         try:
@@ -218,34 +219,29 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     async def async_step_device_selection(self, user_input: None) -> ConfigFlowResult:
         """Handle device selection."""
-        current_selection = self.config_entry.options.get("devices", [])
-        if not current_selection:
+        if not self.devices:
             _LOGGER.error("No devices found")
             return self.async_abort(reason="no devices found")
+        # Get the current selection from the config entry options
+        current_selection = self.config_entry.options.get("devices", [])
 
         if user_input is not None:
             return self.async_create_entry(
                 title="", data={"devices": user_input["selected_devices"]}
             )
-        elif user_input is None:
-            _LOGGER.error("No devices found")
-            return self.async_abort(reason="no devices found")
 
+        # Show the device selection form
         return self.async_show_form(
             step_id="device_selection",
             data_schema=vol.Schema(
                 {
                     vol.Optional(
-                        "Select devices you want to enable in HomeAssistant:",
+                        "selected_devices",
                         default=current_selection,
                     ): cv.multi_select(self.devices)
                 }
             ),
         )
-
-    async def async_step_api_reauth_opt(self, user_input=None) -> ConfigFlowResult:
-        """Handle API reauthentication option."""
-        return await self.async_step_user()
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:

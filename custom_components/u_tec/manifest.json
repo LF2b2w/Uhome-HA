@@ -1,7 +1,7 @@
 {
   "domain": "u_tec",
   "name": "U-Tec",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "codeowners": [
     "@LF2b2w"
   ],
@@ -14,7 +14,7 @@
   "issue_tracker": "https://github.com/LF2b2w/Uhome-HA/issues",
   "iot_class": "cloud_polling",
   "requirements": [
-    "utec_py_LF2b2w==0.2.1"
+    "utec_py_LF2b2w==0.2.2"
   ],
   "integration_type": "hub"
 }

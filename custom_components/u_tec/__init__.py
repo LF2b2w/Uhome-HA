@@ -47,8 +47,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Initialize webhook handler
     webhook_handler = api.AsyncPushUpdateHandler(hass, Uhomeapi, entry.entry_id)
     _LOGGER.debug("Webhook handler initialised")
-    #await webhook_handler.async_register_webhook(auth_data)
-    #_LOGGER.debug("Webhook routine complete")
 
     # Check if push notifications are enabled in options
     push_enabled = entry.options.get(CONF_PUSH_ENABLED, True)
@@ -71,10 +69,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
-
-    # Cleanup on unload
+    # Unload the entry if the user disables push notifications
     entry.async_on_unload(entry.add_update_listener(async_update_options))
-    entry.async_on_unload(webhook_handler.unregister_webhook())
+    # Unregister the webhook when the entry is unloaded
+    entry.async_on_unload(webhook_handler.unregister_webhook)
 
     return True
 
@@ -103,11 +101,3 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
             # Unregister webhook
             webhook_handler.unregister_webhook()
     await hass.config_entries.async_reload(entry.entry_id)
-
-
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry."""
-    # Unregister the webhook
-    #webhook_handler = hass.data[DOMAIN][entry.entry_id]["webhook_handler"]
-    #webhook_handler.unregister_webhook()
-    return await hass.config_entries.async_unload_platforms(entry, _PLATFORMS)

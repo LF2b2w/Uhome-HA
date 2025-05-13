@@ -1,6 +1,6 @@
 """Support for Uhome lights."""
 
-from voluptuous import Any
+from typing import Any, cast
 
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
@@ -13,6 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import _LOGGER, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from utec_py.devices.light import Light as UhomeLight
@@ -45,15 +46,21 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
     def __init__(self, coordinator: UhomeDataUpdateCoordinator, device_id: str) -> None:
         """Initialize the light."""
         super().__init__(coordinator)
-        self._device = coordinator.devices[device_id]
+        self._device = cast(UhomeLight, coordinator.devices[device_id])
         self._attr_unique_id = f"{DOMAIN}_{device_id}"
         self._attr_name = self._device.name
-        self._attr_device_info = self._device.device_info
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, self._device.device_id)},
+            name=self._device.name,
+            manufacturer=self._device.manufacturer,
+            model=self._device.model,
+            hw_version=self._device.hw_version,
+        )
         self._attr_has_entity_name = True
 
         # Set supported color modes
         self._attr_supported_color_modes = set()
-        supported_features = self._device.supported_features
+        supported_features = self._device.supported_capabilities
 
         if "brightness" in supported_features:
             self._attr_supported_color_modes.add(ColorMode.BRIGHTNESS)
@@ -108,8 +115,9 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
             turn_on_args = {}
 
             if ATTR_BRIGHTNESS in kwargs:
+                brightness = int(kwargs[ATTR_BRIGHTNESS])
                 # Convert from 0-255 to 0-100
-                turn_on_args["brightness"] = int(kwargs[ATTR_BRIGHTNESS] / 2.55)
+                turn_on_args["brightness"] = int(brightness / 2.55)
 
             if ATTR_RGB_COLOR in kwargs:
                 turn_on_args["rgb_color"] = kwargs[ATTR_RGB_COLOR]
@@ -144,11 +152,11 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
             async_dispatcher_connect(
                 self.hass,
                 f"{SIGNAL_DEVICE_UPDATE}_{self._device.device_id}",
-                self._handle_push_update(),
+                self._handle_push_update,
             )
         )
 
     @callback
-    def _handle_push_update(self):
+    def _handle_push_update(self, push_data) -> None:
         """Update device from push data."""
         self.async_write_ha_state()

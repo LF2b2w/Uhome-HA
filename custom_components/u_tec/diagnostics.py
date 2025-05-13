@@ -10,7 +10,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
 from homeassistant.core import HomeAssistant
 
-
 from .const import DOMAIN
 from .coordinator import UhomeDataUpdateCoordinator
 
@@ -89,19 +88,19 @@ async def async_get_config_entry_diagnostics(
         }
 
     # Collect query responses for each device
-    for device_id, device in coordinator.devices.items():
+    for device_id in coordinator.devices.items():
         try:
             device_query_data = await api.query_device(device_id)
             query_data[device_id] = device_query_data
         except ValueError as err:
             query_data[device_id] = {"error": str(err)}
         except ConnectionError as err:
-            query_data = {"error": f"Connection error: {err!s}"}
+            query_data[device_id] = {"error": f"Connection error: {err!s}"}
         except TimeoutError as err:
-            query_data = {"error": f"Timeout error: {err!s}"}
+            query_data[device_id] = {"error": f"Timeout error: {err!s}"}
 
     # Build diagnostics data
-    diagnostics_data = {
+    return {
         "config_entry": async_redact_data(entry.as_dict(), REDACT_KEYS),
         "coordinator_data": {
             "last_update_success": coordinator.last_update_success,
@@ -111,5 +110,3 @@ async def async_get_config_entry_diagnostics(
         "discovery_data": async_redact_data(discovery_data, REDACT_KEYS),
         "query_data": async_redact_data(query_data, REDACT_KEYS),
     }
-
-    return diagnostics_data

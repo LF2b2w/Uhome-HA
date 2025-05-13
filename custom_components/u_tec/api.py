@@ -1,14 +1,12 @@
 """API for Uhome bound to Home Assistant OAuth."""
 
 import logging
-from xml.dom import ValidationErr
 
-from aiohttp import ClientSession
+from aiohttp import ClientSession, web
 
 from homeassistant.components import webhook
-from homeassistant.helpers import network
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import config_entry_oauth2_flow
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_entry_oauth2_flow, network
 from utec_py.api import AbstractAuth, UHomeApi
 from utec_py.exceptions import ApiError, UHomeError, ValidationError
 
@@ -43,16 +41,16 @@ class AsyncPushUpdateHandler:
         """Initialize the webhook handler."""
         self.hass = hass
         self.entry_id = entry_id
-        self.webhook_id = f"{WEBHOOK_ID_PREFIX}{entry_id}" 
+        self.webhook_id = f"{WEBHOOK_ID_PREFIX}{entry_id}"
         self.webhook_url = None
         self._unregister_webhook = None
         self.api = api
 
     async def async_register_webhook(self, auth_data) -> bool:
         """Register webhook with Home Assistant and the Uhome API."""
-        
+
         # Get the external URL
-        external_url = network.get_url(self.hass, prefer_external=True)
+        external_url = network.get_url(self.hass, allow_internal=False)
         if not external_url:
             _LOGGER.error(
                 "External URL not configured, push notifications will not work"
@@ -75,38 +73,38 @@ class AsyncPushUpdateHandler:
         else:
             # Register webhook handler in Home Assistant
             self._unregister_webhook = webhook.async_register(
-                self.hass, 
-                DOMAIN, 
-                WEBHOOK_HANDLER, 
-                self.webhook_id, 
-                self._handle_webhook
+                self.hass,
+                DOMAIN,
+                WEBHOOK_HANDLER,
+                self.webhook_id,
+                self._handle_webhook,
             )
             return True
 
-    def unregister_webhook(self) -> None:
+    async def unregister_webhook(self) -> None:
         """Unregister the webhook."""
         if self._unregister_webhook:
-            #self._unregister_webhook()
+            # self._unregister_webhook()
             webhook.async_unregister(self.hass, self.webhook_id)
             self._unregister_webhook = None
             _LOGGER.debug("Unregistered webhook %s", self.webhook_id)
 
-    @callback
-    async def _handle_webhook(self, hass: HomeAssistant, webhook_id, request):
+    async def _handle_webhook(
+        self, hass: HomeAssistant, webhook_id, request
+    ) -> web.Response | None:
         """Handle webhook callback."""
         try:
             # Handle POST request
             if request.method != "POST":
                 _LOGGER.error("Unsupported method: %s", request.method)
-                return None
+                return web.Response(status=405)
 
             data = await request.json()
             _LOGGER.debug("Received webhook data: %s", data)
 
             if self.entry_id not in hass.data[DOMAIN]:
                 _LOGGER.error("Unknown entry_id in webhook: %s", self.entry_id)
-                return None
-
+                return web.Response(status=404)
             coordinator = hass.data[DOMAIN][self.entry_id]["coordinator"]
 
             # Process the device update
@@ -114,6 +112,6 @@ class AsyncPushUpdateHandler:
 
         except UHomeError as err:
             _LOGGER.error("Error processing webhook: %s", err)
-            return {"success": False, "error": str(err)}
+            return web.json_response({"success": False, "error": str(err)}, status=400)
         else:
-            return {"success": True}
+            return web.json_response({"success": True})

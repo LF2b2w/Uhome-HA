@@ -1,5 +1,7 @@
 """Support for Uhome Battery Sensors."""
 
+from typing import cast
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -9,12 +11,15 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from utec_py.devices.device_const import DeviceCapability
+from utec_py.devices.lock import Lock as UhomeLock
 
 from .const import DOMAIN, SIGNAL_DEVICE_UPDATE, SIGNAL_NEW_DEVICE
 from .coordinator import UhomeDataUpdateCoordinator
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -64,10 +69,16 @@ class UhomeBatterySensorEntity(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator: UhomeDataUpdateCoordinator, device_id: str) -> None:
         """Initialize the battery sensor."""
         super().__init__(coordinator)
-        self._device = coordinator.devices[device_id]
+        self._device = cast(UhomeLock, coordinator.devices[device_id])
         self._attr_unique_id = f"{DOMAIN}_battery_{device_id}"
         self._attr_name = f"{self._device.name} Battery"
-        self._attr_device_info = self._device.device_info
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, self._device.device_id)},
+            name=self._device.name,
+            manufacturer=self._device.manufacturer,
+            model=self._device.model,
+            hw_version=self._device.hw_version,
+        )
         self._attr_device_class = SensorDeviceClass.BATTERY
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_native_unit_of_measurement = PERCENTAGE
@@ -100,11 +111,11 @@ class UhomeBatterySensorEntity(CoordinatorEntity, SensorEntity):
             async_dispatcher_connect(
                 self.hass,
                 f"{SIGNAL_DEVICE_UPDATE}_{self._device.device_id}",
-                self._handle_push_update(),
+                self._handle_push_update,
             )
         )
 
     @callback
-    def _handle_push_update(self):
+    def _handle_push_update(self, push_data):
         """Update device from push data."""
         self.async_write_ha_state()
