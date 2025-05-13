@@ -9,7 +9,7 @@ from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
 from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import config_entry_oauth2_flow
+from homeassistant.helpers import config_entry_oauth2_flow, selector
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.selector import BooleanSelector
 from homeassistant.util import Mapping
@@ -120,12 +120,11 @@ class UhomeOAuth2FlowHandler(
 class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow with proper device discovery."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+    def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialise OptionsFlowHandler."""
-        # self.config_entry = ConfigEntry
+        super().__init__()
         self.api = None
         self.devices = {}
-        self.config_entry = config_entry
         self.options = dict(config_entry.options)
 
     async def async_step_init(
@@ -134,12 +133,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Initialize options flow."""
         return self.async_show_menu(
             step_id="init",
-            menu_options=["update_push", "get_devices"],
-            description_placeholders={"model": "Example"},
+            menu_options={
+                "update_push": "Update Push Status",
+                "get_devices": "Select Active Devices"},
         )
 
     async def async_step_update_push(
-        self, user_input: dict[str, Any] | None = None
+        self,
+        user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Select devices for push updates."""
 
@@ -164,7 +165,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         )
 
     async def async_step_push_device_selection(
-        self, user_input: dict[str, Any] | None = None
+        self,
+        user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle device selection step."""
         if user_input is not None:
@@ -200,7 +202,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         )
 
     async def async_step_get_devices(
-        self, user_input: dict[str, Any] | None = None
+        self,
+        user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Retrieve all devices from api."""
         try:

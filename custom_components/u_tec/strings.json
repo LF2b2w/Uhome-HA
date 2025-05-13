@@ -33,14 +33,6 @@
   },
   "options": {
     "step": {
-      "init": {
-        "title": "Configure Uhome",
-        "description": "Update device push update status or select devices for HomeAssistant.",
-        "menu_options": {
-          "update_push": "Update Push Status",
-          "get_devices": "Select Devices"
-        }
-      },
       "update_push": {
         "title": "Configure Uhome",
         "description": "Enable or disable push notifications for device updates",
@@ -48,13 +40,20 @@
           "push_enabled": "Enable push notifications"
         }
       },
-      "device_selection": {
+      "push_device_selection": {
         "title": "Select Devices for Push Updates",
         "description": "Choose which devices should receive push updates. If none are selected, all devices will receive updates.",
         "data": {
           "push_devices": "Devices"
         }
+      },
+        "device_selection": {
+          "title": "Select Active Devices",
+          "description": "Choose which devices should be active in HomeAssistant.",
+          "data": {
+            "selected_devices": "Devices"
+          }
+        }
       }
-    }
   }
 }
