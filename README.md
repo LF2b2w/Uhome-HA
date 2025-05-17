@@ -2,6 +2,9 @@
 
 A Home Assistant integration for U-Tec smart home devices via the Uhome API that allows you to control your locks, lights, switches, and sensors through Home Assistant.
 
+## Important
+Currently the Utec API doesn't support devices over wifi bridge modules
+
 ## Features
 - Secure API communication
 - Supports multiple U-tec device types:
