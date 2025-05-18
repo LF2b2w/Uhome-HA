@@ -2,6 +2,9 @@
 
 A Home Assistant integration for U-Tec smart home devices via the Uhome API that allows you to control your locks, lights, switches, and sensors through Home Assistant.
 
+## Important
+Currently the Utec API doesn't support devices over wifi bridge modules
+
 ## Features
 - Secure API communication
 - Supports multiple U-tec device types:
@@ -16,6 +19,9 @@ Click add custom repo\
 Paste the URL of this repo and choose type integration\
 Search for "U-tec"\
 Click "Install"
+#### Set up redirect URI in Uhome app
+In the Uhome app, under the developer tab -  
+    Set redirect URI - `https://my.home-assistant.io/redirect/oauth`
 
 ### Manual Installation
 Download the repository\
