@@ -1,5 +1,6 @@
 """Support for Uhome lights."""
 
+import math
 from typing import Any, cast
 
 from homeassistant.components.light import (
@@ -16,12 +17,15 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util.color import value_to_brightness
+from homeassistant.util.percentage import percentage_to_ranged_value
 from utec_py.devices.light import Light as UhomeLight
 from utec_py.exceptions import DeviceError
 
 from .const import DOMAIN, SIGNAL_DEVICE_UPDATE
 from .coordinator import UhomeDataUpdateCoordinator
 
+BRIGHTNESS_SCALE = (0, 100)
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -95,7 +99,7 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
         """Return the brightness of this light between 0..255."""
         if self._device.brightness is None:
             return None
-        return int(self._device.brightness * 2.55)
+        return value_to_brightness(BRIGHTNESS_SCALE, self._device.brightness)
 
     @property
     def rgb_color(self) -> tuple[int, int, int] | None:
@@ -115,7 +119,7 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
             turn_on_args = {}
 
             if ATTR_BRIGHTNESS in kwargs:
-                brightness = int(kwargs[ATTR_BRIGHTNESS])
+                brightness =  math.ceil(percentage_to_ranged_value(BRIGHTNESS_SCALE, kwargs[ATTR_BRIGHTNESS]))
                 # Convert from 0-255 to 0-100
                 turn_on_args["brightness"] = int(brightness / 2.55)
 
