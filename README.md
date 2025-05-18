@@ -19,6 +19,9 @@ Click add custom repo\
 Paste the URL of this repo and choose type integration\
 Search for "U-tec"\
 Click "Install"
+#### Set up redirect URI in Uhome app
+In the Uhome app, under the developer tab -  
+    Set redirect URI - `https://my.home-assistant.io/redirect/oauth`
 
 ### Manual Installation
 Download the repository\
