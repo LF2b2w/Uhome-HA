@@ -50,7 +50,7 @@ Restart Home Assistant
 In Home Assistant, go to Configuration > Integrations\
 Click the "+" button to add a new integration\
 Search for "U-Tec"\
-You will need to provide this information from the U-Home mobile app under Settings -> :
+You will need to provide this information from the U-Home mobile app under Settings -> Develop Console :
 - Client ID
 - Client Secret
 - API Scope (default: 'openapi')
