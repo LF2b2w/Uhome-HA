@@ -3,7 +3,10 @@
 A Home Assistant integration for U-Tec smart home devices via the Uhome API that allows you to control your locks, lights, switches, and sensors through Home Assistant.
 
 ## Important
-Currently the Utec API doesn't support devices over wifi bridge modules
+- Obtain API credentials (see below) prior to setting up the integration.
+- Currently the Utec API doesn't support the following devices:
+	- Wifi bridge modules
+	- Air devices
 
 ## Features
 - Secure API communication
@@ -11,6 +14,20 @@ Currently the Utec API doesn't support devices over wifi bridge modules
     - Locks
     - Lights
     - Switches
+
+## Getting Your Credentials
+#### Having your credentials is nessecary to configure the integration, so get them before you install it.
+
+Visit the [Developer Portal](https://developer.uhomelabs.com/hc/en-us/requests/new) and login using the same auth you use for your account. 
+If you get an error about a page not being found, just ignore that and click on *Submit a Request* at the top.
+
+After authenticating, you will *Submit a Request* using the form. For `Request Category` you want to select *API credentials*. In the description be sure to provide the address that is tied to your account to save some back-and-forth with Support. They will send you an NDA to fill out and sign that you must return in order to obtain this ability. Once this is completed it can take a few days to be activated.
+
+Once your account is activated with API credentials, in your U-Home mobile app there will now be a section called *Develop Console*.  In there you will find your `Client ID`, `Client Secret`, `Scope`, and `RedirectURI`.  While you are in there update, or confirm, the value of `RedirectURI` is `https://my.home-assistant.io/redirect/oauth` and `scope` is set to `openapi`. 
+
+For the integration you will need: 
+- Client ID
+- Client Secret
 
 ## Installation
 ### HACS (Recommended)
@@ -22,6 +39,7 @@ Click "Install"
 #### Set up redirect URI in Uhome app
 In the Uhome app, under the developer tab -  
     Set redirect URI - `https://my.home-assistant.io/redirect/oauth`
+Note: Enter this url exactly as it is here. Do not replace the hostname with your own home assistant.
 
 ### Manual Installation
 Download the repository\
@@ -32,20 +50,11 @@ Restart Home Assistant
 In Home Assistant, go to Configuration > Integrations\
 Click the "+" button to add a new integration\
 Search for "U-Tec"\
-You will need to provide:
+You will need to provide this information from the U-Home mobile app under Settings -> :
 - Client ID
 - Client Secret
 - API Scope (default: 'openapi')
 
-## Getting Your Credentials
-Visit the U-tec developer portal\
-[Apply for developer credentials](https://developer.uhomelabs.com/hc/en-us/requests/new) (They allow end-user, as a reason)\
-Note down your:
-- Client ID
-- Client Secret
-
-In the Uhome app, under the developer tab -  
-    Set redirect URI - `https://my.home-assistant.io/redirect/oauth`
 
 ## Troubleshooting
 See [FAQ](https://github.com/LF2b2w/Uhome-HA/discussions/2)
