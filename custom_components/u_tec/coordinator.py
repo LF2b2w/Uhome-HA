@@ -104,7 +104,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                 for device_id, device in self.devices.items()
             }
         except AuthenticationError as err:
-            raise ConfigEntryAuthFailed from err
+            raise ConfigEntryAuthFailed(f"Credentials expired for {device.name}") from err
         except ApiError as err:
             raise UpdateFailed(f"Error communicating with API: {err}") from err
         except ValueError as err:

@@ -90,14 +90,6 @@ class UhomeOAuth2FlowHandler(
             title=self.flow_impl.name, data=data, options=options
         )
 
-    @staticmethod
-    @callback
-    def async_get_options_flow(
-        config_entry: ConfigEntry,
-    ) -> config_entries.OptionsFlow:
-        """Get the options flow for this handler."""
-        return OptionsFlowHandler(config_entry)
-
     async def async_step_reauth(
         self, entry_data: Mapping[str, vol.Any]
     ) -> ConfigFlowResult:
@@ -113,9 +105,15 @@ class UhomeOAuth2FlowHandler(
                 step_id="reauth_confirm",
                 data_schema=vol.Schema({}),
             )
-
         return await self.async_step_user()
 
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        """Get the options flow for this handler."""
+        return OptionsFlowHandler(config_entry)
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow with proper device discovery."""

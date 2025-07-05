@@ -82,7 +82,6 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     # Get the webhook handler and coordinator
     webhook_handler = hass.data[DOMAIN][entry.entry_id]["webhook_handler"]
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    api_instance = hass.data[DOMAIN][entry.entry_id]["api"]
     auth_data = hass.data[DOMAIN][entry.entry_id]["auth_data"]
 
     # Check if push notification setting has changed
@@ -96,7 +95,7 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     if old_push_enabled != new_push_enabled:
         if new_push_enabled:
             # Register webhook
-            await webhook_handler.async_register_webhook(api_instance, auth_data)
+            await webhook_handler.async_register_webhook(auth_data)
         else:
             # Unregister webhook
             webhook_handler.unregister_webhook()

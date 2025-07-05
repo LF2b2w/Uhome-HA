@@ -24,7 +24,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Uhome door sensors based on a config entry."""
-    coordinator: UhomeDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: UhomeDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
     # Add door sensors for locks that have them
     async_add_entities(

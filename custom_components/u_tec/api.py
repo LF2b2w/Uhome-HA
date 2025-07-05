@@ -29,8 +29,7 @@ class AsyncConfigEntryAuth(AbstractAuth):
 
     async def async_get_access_token(self) -> str:
         """Return a valid access token."""
-        if self._oauth_session.valid_token is None:
-            await self._oauth_session.async_ensure_token_valid()
+        await self._oauth_session.async_ensure_token_valid()
         return self._oauth_session.token["access_token"]
 
 
@@ -56,16 +55,14 @@ class AsyncPushUpdateHandler:
                 "External URL not configured, push notifications will not work"
             )
             return False
-        if external_url:
-            webhook_url = webhook.async_generate_url(self.hass, self.webhook_id)
-        else:
-            raise ValidationError
+        # Generate the external URL
+        webhook_url = webhook.async_generate_url(self.hass, self.webhook_id)
+
 
         # Register the webhook with the API
-        access_token = await auth_data.async_get_access_token()
         try:
             _LOGGER.debug("Registering webhook URL:%s", webhook_url)
-            result = await self.api.set_push_status(access_token, webhook_url)
+            result = await self.api.set_push_status(webhook_url)
             _LOGGER.debug("Webhook registration result: %s", result)
         except ApiError as err:
             _LOGGER.error("Failed to register webhook: %s", err)

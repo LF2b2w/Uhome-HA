@@ -119,9 +119,8 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
             turn_on_args = {}
 
             if ATTR_BRIGHTNESS in kwargs:
-                brightness =  math.ceil(percentage_to_ranged_value(BRIGHTNESS_SCALE, kwargs[ATTR_BRIGHTNESS]))
-                # Convert from 0-255 to 0-100
-                turn_on_args["brightness"] = int(brightness / 2.55)
+                brightness_255 = kwargs[ATTR_BRIGHTNESS]
+                turn_on_args["brightness"] = int((brightness_255 / 255) * 100)
 
             if ATTR_RGB_COLOR in kwargs:
                 turn_on_args["rgb_color"] = kwargs[ATTR_RGB_COLOR]

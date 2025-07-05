@@ -88,7 +88,7 @@ async def async_get_config_entry_diagnostics(
         }
 
     # Collect query responses for each device
-    for device_id in coordinator.devices.items():
+    for device_id, device in coordinator.devices.items():
         try:
             device_query_data = await api.query_device(device_id)
             query_data[device_id] = device_query_data

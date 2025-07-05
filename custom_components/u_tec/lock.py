@@ -100,7 +100,7 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
             await self.coordinator.async_request_refresh()
         except DeviceError as err:
             _LOGGER.error("Failed to lock device %s: %s", self._device.device_id, err)
-            raise HomeAssistantError("Failed to lock: {err}") from err
+            raise HomeAssistantError(f"Failed to lock: {err}") from err
 
     async def async_unlock(self) -> None:
         """Unlock the device."""
@@ -109,7 +109,7 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
             await self.coordinator.async_request_refresh()
         except DeviceError as err:
             _LOGGER.error("Failed to unlock device %s: %s", self._device.device_id, err)
-            raise HomeAssistantError("Failed to unlock: {err}") from err
+            raise HomeAssistantError(f"Failed to lock: {err}") from err
 
     async def async_added_to_hass(self):
         """Register callbacks."""
