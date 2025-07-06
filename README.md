@@ -2,17 +2,30 @@
 
 A Home Assistant integration for U-Tec smart home devices via the Uhome API that allows you to control your locks, lights, switches, and sensors through Home Assistant.
 
-## Features
-- Secure API communication
+## Device Types
 - Supports multiple U-tec device types:
     - Locks
     - Lights
     - Switches
+    - Smart Plugs (Wifi)
+ 
+### Features
+- Secure API communication
+- Locking and unlocking
+- Lock states
+- Door states
+- Battery levels
+- Switch on and off (Lightbulbs use the switch capabilitiy for some reason, so at very least they should have rudimentary functionality)
+- SwitchLevel (Honestly, idk what this is actually for, but hopefully we can use it to control light brightness until they properly implement light controls)
 
 ## Limitations
 - Currently the Utec API doesn't support the following devices:
 	- Wifi bridge modules
-	- Air devices
+	- Air Portal registration / devices
+
+## Requirements
+- API Credentials
+- External Access Configured (ie., Nabu Casa)
 
 ## Getting Your Credentials
 #### Having your credentials is nessecary to configure the integration, so get them before you install it.
