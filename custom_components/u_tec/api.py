@@ -7,6 +7,7 @@ from aiohttp import ClientSession, web
 from homeassistant.components import webhook
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_entry_oauth2_flow, network
+from homeassistant.helpers.network import NoURLAvailableError
 from utec_py.api import AbstractAuth, UHomeApi
 from utec_py.exceptions import ApiError, UHomeError, ValidationError
 
@@ -49,7 +50,14 @@ class AsyncPushUpdateHandler:
         """Register webhook with Home Assistant and the Uhome API."""
 
         # Get the external URL
-        external_url = network.get_url(self.hass, allow_internal=False)
+        try:
+            external_url = network.get_url(self.hass, allow_internal=False)
+        except NoURLAvailableError:
+            _LOGGER.error(
+                "External URL not configured, push notifications will not work"
+            )
+            return False
+
         if not external_url:
             _LOGGER.error(
                 "External URL not configured, push notifications will not work"
