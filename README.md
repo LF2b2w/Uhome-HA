@@ -30,18 +30,24 @@ A Home Assistant integration for U-Tec smart home devices via the Uhome API that
 ## Getting Your Credentials
 #### Having your credentials is nessecary to configure the integration, so get them before you install it.
 
-Visit the [Developer Portal](https://developer.uhomelabs.com/hc/en-us/requests/new) and login using the same auth you use for your account. 
-*Note:* If you get an error about a page not being found, just ignore that and click on *Submit a Request* at the top.
+API credentials are now available directly in the Xthings Home app (formerly U-Home) version 3.5.5 or later. No need to submit a request through the developer portal.
 
-After authenticating, you will *Submit a Request* using the form. For *Request Category* you want to select *API credentials*. In the *Description* be sure to provide the address that is tied to your account to save some back-and-forth with Support. They will send you an NDA to fill out and sign that you must return in order to obtain this ability. Once this is completed it can take a few days to be activated.
+1. Open the Xthings Home app and go to **My Account**
+2. Tap **OpenAPI**
+3. Follow the prompts to activate OpenAPI — select your role and the products you are integrating with, then tap **Activate Openapi**
 
-*Tip:* Mentioning you are working on a Home Assistant Integration is more than acceptable of a reason for them.
+![Steps to enable OpenAPI in the app](images/api_enable_steps.png)
 
-Once your account is activated with API credentials, in your U-Home mobile app there will now be a section called *Develop Console*.  
-- There you will find your `Client ID`, `Client Secret`, `Scope`, and `RedirectURI`.
-- While you are in there update, or confirm, the value of `RedirectURI` is `https://my.home-assistant.io/redirect/oauth` and `scope` is set to `openapi`. 
+Once activated, you will see your `Client ID`, `Client Secret`, `Scope`, and `RedirectUri`.
+- Set `RedirectUri` to `https://my.home-assistant.io/redirect/oauth`
+- Confirm `Scope` is set to `OpenAPI`
+- Tap **Save**
+
+![API credentials screen](images/api_credentials.png)
 
 For the integration you will need `Client ID` and `Client Secret`.
+
+*See [issue #36](https://github.com/LF2b2w/Uhome-HA/issues/36) for more details. Screenshots courtesy of @geofox784.*
 
 ## Installation
 ### HACS (Recommended)
