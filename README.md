@@ -47,7 +47,7 @@ Once activated, you will see your `Client ID`, `Client Secret`, `Scope`, and `Re
 
 For the integration you will need `Client ID` and `Client Secret`.
 
-For more information, see the [Developer API Documentation](https://doc.api.u-tec.com/#intro).
+For more information, see the [Developer API Documentation](https://doc.api.u-tec.com/#intro). If you run into issues with the API, you can [submit a support request](https://developer.xthings.com/hc/en-us/requests/new).
 
 *See [issue #36](https://github.com/LF2b2w/Uhome-HA/issues/36) for more details. Screenshots courtesy of @geofox784.*
 
