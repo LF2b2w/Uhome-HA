@@ -1,19 +1,26 @@
 """API for Uhome bound to Home Assistant OAuth."""
 
+import json
 import logging
+import secrets
+from datetime import timedelta
 
 from aiohttp import ClientSession, web
 
 from homeassistant.components import webhook
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_entry_oauth2_flow, network
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.network import NoURLAvailableError
 from utec_py.api import AbstractAuth, UHomeApi
-from utec_py.exceptions import ApiError, UHomeError, ValidationError
+from utec_py.exceptions import ApiError, UHomeError
 
 from .const import DOMAIN, WEBHOOK_HANDLER, WEBHOOK_ID_PREFIX
 
 _LOGGER = logging.getLogger(__name__)
+
+# Re-register the webhook with a fresh secret every 24 hours
+_REREGISTER_INTERVAL = timedelta(hours=24)
 
 
 class AsyncConfigEntryAuth(AbstractAuth):
@@ -44,39 +51,76 @@ class AsyncPushUpdateHandler:
         self.webhook_id = f"{WEBHOOK_ID_PREFIX}{entry_id}"
         self.webhook_url = None
         self._unregister_webhook = None
+        self._cancel_reregister = None
+        self._push_secret: str | None = None
         self.api = api
+        self._auth_data = None
+
+    def _generate_secret(self) -> str:
+        """Generate a fresh random secret token for push validation."""
+        return secrets.token_urlsafe(32)
 
     async def async_register_webhook(self, auth_data) -> bool:
         """Register webhook with Home Assistant and the Uhome API."""
+        self._auth_data = auth_data
 
-        # Get the external URL
-        try:
-            external_url = network.get_url(self.hass, allow_internal=False)
-        except NoURLAvailableError:
-            _LOGGER.error(
-                "External URL not configured, push notifications will not work"
-            )
-            return False
+        # Try multiple URL resolution strategies
+        external_url = None
+        for allow_internal, allow_ip, prefer_cloud in [
+            (False, False, False),
+            (False, False, True),
+            (True, True, False),
+        ]:
+            try:
+                external_url = network.get_url(
+                    self.hass,
+                    allow_internal=allow_internal,
+                    allow_ip=allow_ip,
+                    prefer_cloud=prefer_cloud,
+                )
+                if external_url:
+                    _LOGGER.debug(
+                        "Resolved webhook base URL: %s (internal=%s, cloud=%s)",
+                        external_url, allow_internal, prefer_cloud,
+                    )
+                    break
+            except NoURLAvailableError:
+                continue
 
         if not external_url:
             _LOGGER.error(
-                "External URL not configured, push notifications will not work"
+                "No external URL available for push notifications. "
+                "Configure an external URL in Settings -> System -> Network, "
+                "or enable Home Assistant Cloud (Nabu Casa)."
             )
             return False
-        # Generate the external URL
+
         webhook_url = webhook.async_generate_url(self.hass, self.webhook_id)
 
+        if any(local in webhook_url for local in (
+            "192.168.", "10.", "172.", "homeassistant.local", "localhost", "127.0."
+        )):
+            _LOGGER.warning(
+                "Webhook URL %s appears to be a local address. "
+                "U-Tec's servers cannot reach it -- push state updates will not work. "
+                "Set up Nabu Casa or an externally-reachable URL.",
+                webhook_url,
+            )
 
-        # Register the webhook with the API
+        # Generate a fresh secret for this registration
+        self._push_secret = self._generate_secret()
+        _LOGGER.debug("Generated new push secret for webhook registration")
+
         try:
-            _LOGGER.debug("Registering webhook URL:%s", webhook_url)
-            result = await self.api.set_push_status(webhook_url)
+            _LOGGER.debug("Registering webhook URL: %s", webhook_url)
+            result = await self.api.set_push_status(webhook_url, self._push_secret)
             _LOGGER.debug("Webhook registration result: %s", result)
         except ApiError as err:
-            _LOGGER.error("Failed to register webhook: %s", err)
+            _LOGGER.error("Failed to register webhook with U-Tec API: %s", err)
             return False
-        else:
-            # Register webhook handler in Home Assistant
+
+        # Register HA-side webhook handler (only once)
+        if not self._unregister_webhook:
             self._unregister_webhook = webhook.async_register(
                 self.hass,
                 DOMAIN,
@@ -84,12 +128,35 @@ class AsyncPushUpdateHandler:
                 self.webhook_id,
                 self._handle_webhook,
             )
-            return True
+
+        self.webhook_url = webhook_url
+
+        # Schedule daily re-registration with a fresh secret
+        if self._cancel_reregister:
+            self._cancel_reregister()
+        self._cancel_reregister = async_track_time_interval(
+            self.hass,
+            self._async_reregister,
+            _REREGISTER_INTERVAL,
+        )
+        _LOGGER.debug("Scheduled daily webhook re-registration")
+
+        return True
+
+    @callback
+    def _async_reregister(self, _now) -> None:
+        """Trigger webhook re-registration with a fresh secret (called by scheduler)."""
+        _LOGGER.debug("Daily webhook re-registration triggered")
+        self.hass.async_create_task(
+            self.async_register_webhook(self._auth_data)
+        )
 
     async def unregister_webhook(self) -> None:
-        """Unregister the webhook."""
+        """Unregister the webhook and cancel the re-registration scheduler."""
+        if self._cancel_reregister:
+            self._cancel_reregister()
+            self._cancel_reregister = None
         if self._unregister_webhook:
-            # self._unregister_webhook()
             webhook.async_unregister(self.hass, self.webhook_id)
             self._unregister_webhook = None
             _LOGGER.debug("Unregistered webhook %s", self.webhook_id)
@@ -99,24 +166,60 @@ class AsyncPushUpdateHandler:
     ) -> web.Response | None:
         """Handle webhook callback."""
         try:
-            # Handle POST request
             if request.method != "POST":
                 _LOGGER.error("Unsupported method: %s", request.method)
                 return web.Response(status=405)
 
-            data = await request.json()
+            raw_body = await request.read()
+            _LOGGER.debug(
+                "Webhook hit received: method=%s headers=%s body=%s",
+                request.method,
+                dict(request.headers),
+                raw_body.decode("utf-8", errors="replace"),
+            )
+
+            try:
+                data = json.loads(raw_body)
+            except Exception as json_err:  # noqa: BLE001
+                _LOGGER.error("Failed to parse webhook JSON: %s", json_err)
+                return web.Response(status=400)
+
+            # Validate the push secret if we have one registered.
+            # We don't know exactly where U-Tec puts the access_token in their
+            # push payload, so we check a few likely locations. If it's missing
+            # entirely we warn but still process (since the field location is
+            # unconfirmed). If it's present but wrong we reject with 403.
+            if self._push_secret is not None and isinstance(data, dict):
+                incoming_token = (
+                    data.get("access_token")
+                    or data.get("header", {}).get("access_token")
+                    or data.get("payload", {}).get("access_token")
+                )
+                if incoming_token is None:
+                    _LOGGER.warning(
+                        "Webhook received with no access_token in payload -- "
+                        "processing anyway since token field location is unconfirmed"
+                    )
+                elif not secrets.compare_digest(incoming_token, self._push_secret):
+                    _LOGGER.error(
+                        "Webhook received with invalid access_token -- ignoring"
+                    )
+                    return web.Response(status=403)
+
             _LOGGER.debug("Received webhook data: %s", data)
 
-            if self.entry_id not in hass.data[DOMAIN]:
+            if self.entry_id not in hass.data.get(DOMAIN, {}):
                 _LOGGER.error("Unknown entry_id in webhook: %s", self.entry_id)
                 return web.Response(status=404)
-            coordinator = hass.data[DOMAIN][self.entry_id]["coordinator"]
 
-            # Process the device update
+            coordinator = hass.data[DOMAIN][self.entry_id]["coordinator"]
             await coordinator.update_push_data(data)
 
         except UHomeError as err:
             _LOGGER.error("Error processing webhook: %s", err)
             return web.json_response({"success": False, "error": str(err)}, status=400)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.exception("Unexpected error processing webhook: %s", err)
+            return web.json_response({"success": False, "error": "Internal error"}, status=500)
         else:
             return web.json_response({"success": True})

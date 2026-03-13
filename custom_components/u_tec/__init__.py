@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
+from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import aiohttp_client, config_entry_oauth2_flow
 from utec_py.api import UHomeApi
@@ -100,3 +100,20 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
             # Unregister webhook
             webhook_handler.unregister_webhook()
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Migrate old config entries to current version."""
+    _LOGGER.debug(
+        "Migrating config entry from version %s to version 2", config_entry.version
+    )
+    if config_entry.version < 2:
+        new_data = {**config_entry.data}
+        # Remove raw secrets stored in legacy entries
+        new_data.pop(CONF_CLIENT_SECRET, None)
+        new_data.pop(CONF_CLIENT_ID, None)
+        hass.config_entries.async_update_entry(
+            config_entry, data=new_data, version=2, minor_version=1
+        )
+        _LOGGER.info("Migrated config entry to version 2")
+    return True
