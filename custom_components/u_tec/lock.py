@@ -40,6 +40,8 @@ async def async_setup_entry(
 class UhomeLockEntity(CoordinatorEntity, LockEntity):
     """Representation of a Uhome lock."""
 
+    _optimistic_is_locked: bool | None = None
+
     def __init__(self, coordinator: UhomeDataUpdateCoordinator, device_id: str) -> None:
         """Initialize the lock."""
         super().__init__(coordinator)

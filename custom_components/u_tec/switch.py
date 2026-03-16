@@ -41,6 +41,8 @@ async def async_setup_entry(
 class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
     """Representation of a Uhome switch."""
 
+    _optimistic_is_on: bool | None = None
+
     def __init__(self, coordinator: UhomeDataUpdateCoordinator, device_id: str) -> None:
         """Initialize the switch."""
         super().__init__(coordinator)

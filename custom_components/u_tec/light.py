@@ -51,6 +51,12 @@ async def async_setup_entry(
 class UhomeLightEntity(CoordinatorEntity, LightEntity):
     """Representation of a Uhome light."""
 
+    # Class-level defaults ensure these always exist even if HA restores
+    # the entity from cache without calling __init__ again.
+    _optimistic_is_on: bool | None = None
+    _optimistic_brightness: int | None = None
+    _pending_brightness_utec: int | None = None
+
     def __init__(self, coordinator: UhomeDataUpdateCoordinator, device_id: str) -> None:
         """Initialize the light."""
         super().__init__(coordinator)
@@ -67,6 +73,9 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
         self._attr_has_entity_name = True
         self._optimistic_is_on: bool | None = None
         self._optimistic_brightness: int | None = None
+        # The U-Tec brightness value (1-100) we last sent, used to detect
+        # when the device has confirmed the change so we can clear optimistic state.
+        self._pending_brightness_utec: int | None = None
 
         # Set supported color modes based on device capabilities
         self._attr_supported_color_modes = set()
@@ -135,10 +144,10 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
         """
         self._optimistic_is_on = None
 
-        if self._pending_brightness_utec is not None:
+        pending = self._pending_brightness_utec
+        if pending is not None:
             actual = self._device.brightness
-            if actual is not None and actual == self._pending_brightness_utec:
-                # Device has confirmed the new brightness — clear optimistic state
+            if actual is not None and actual == pending:
                 self._optimistic_brightness = None
                 self._pending_brightness_utec = None
             # else: keep optimistic brightness until device catches up
