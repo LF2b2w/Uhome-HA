@@ -4,14 +4,25 @@ from __future__ import annotations
 
 import logging
 
+import voluptuous as vol
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import aiohttp_client, config_entry_oauth2_flow
+import homeassistant.helpers.config_validation as cv
 from utec_py.api import UHomeApi
 
 from . import api
-from .const import CONF_PUSH_DEVICES, CONF_PUSH_ENABLED, DOMAIN
+from .const import (
+    CONF_DISCOVERY_INTERVAL,
+    CONF_PUSH_DEVICES,
+    CONF_PUSH_ENABLED,
+    CONF_SCAN_INTERVAL,
+    DEFAULT_DISCOVERY_INTERVAL,
+    DEFAULT_SCAN_INTERVAL,
+    DOMAIN,
+)
 from .coordinator import UhomeDataUpdateCoordinator
 
 _PLATFORMS: list[Platform] = [
@@ -22,6 +33,38 @@ _PLATFORMS: list[Platform] = [
 ]
 
 _LOGGER = logging.getLogger(__name__)
+
+CONFIG_SCHEMA = vol.Schema(
+    {
+        DOMAIN: vol.Schema(
+            {
+                vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): vol.All(
+                    cv.positive_int, vol.Range(min=1)
+                ),
+                vol.Optional(CONF_DISCOVERY_INTERVAL, default=DEFAULT_DISCOVERY_INTERVAL): vol.All(
+                    cv.positive_int, vol.Range(min=10)
+                ),
+            }
+        )
+    },
+    extra=vol.ALLOW_EXTRA,
+)
+
+# Key used inside hass.data[DOMAIN] for yaml-sourced config (separate from entry IDs).
+_YAML_CONFIG_KEY = "_yaml_config"
+
+
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Read configuration.yaml settings and store for use by config entries."""
+    hass.data.setdefault(DOMAIN, {})
+    if DOMAIN in config:
+        hass.data[DOMAIN][_YAML_CONFIG_KEY] = config[DOMAIN]
+        _LOGGER.debug(
+            "Loaded u_tec config from configuration.yaml: scan_interval=%s, discovery_interval=%s",
+            config[DOMAIN].get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+            config[DOMAIN].get(CONF_DISCOVERY_INTERVAL, DEFAULT_DISCOVERY_INTERVAL),
+        )
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -40,9 +83,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     Uhomeapi = UHomeApi(auth_data)
 
-    coordinator = UhomeDataUpdateCoordinator(hass, Uhomeapi)
+    # Pick up any overrides from configuration.yaml, falling back to defaults.
+    yaml_config = hass.data.get(DOMAIN, {}).get(_YAML_CONFIG_KEY, {})
+    scan_interval = yaml_config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+    discovery_interval = yaml_config.get(CONF_DISCOVERY_INTERVAL, DEFAULT_DISCOVERY_INTERVAL)
+
+    coordinator = UhomeDataUpdateCoordinator(
+        hass, Uhomeapi, scan_interval=scan_interval, discovery_interval=discovery_interval
+    )
+
+    # Initial discovery populates self.devices before the first state poll.
+    await coordinator.async_discover_devices()
+    _LOGGER.debug("Initial device discovery complete")
+
     await coordinator.async_config_entry_first_refresh()
     _LOGGER.debug("First Refresh Completed")
+
+    # Periodic re-discovery runs on a long interval to pick up added/removed devices.
+    await coordinator.async_start_periodic_discovery()
 
     # Initialize webhook handler
     webhook_handler = api.AsyncPushUpdateHandler(hass, Uhomeapi, entry.entry_id)
@@ -73,6 +131,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(async_update_options))
     # Unregister the webhook when the entry is unloaded
     entry.async_on_unload(webhook_handler.unregister_webhook)
+    # Stop periodic discovery when the entry is unloaded
+    entry.async_on_unload(coordinator.async_stop_periodic_discovery)
 
     return True
 
