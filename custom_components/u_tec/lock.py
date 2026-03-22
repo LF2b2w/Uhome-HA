@@ -71,13 +71,6 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         return self._device.is_locked
 
     @property
-    def is_open(self) -> bool:
-        """Return true if the lock is open (unlocked)."""
-        if self._optimistic_is_locked is not None:
-            return not self._optimistic_is_locked
-        return self._device.is_open
-
-    @property
     def is_jammed(self) -> bool:
         """Return true if the lock is jammed."""
         return self._device.is_jammed
@@ -92,7 +85,7 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         if self._optimistic_is_locked is not None:
             confirmed = (
                 self._optimistic_is_locked and self._device.is_locked
-                or not self._optimistic_is_locked and self._device.is_open
+                or not self._optimistic_is_locked and not self._device.is_locked
             )
             if confirmed:
                 self._optimistic_is_locked = None
