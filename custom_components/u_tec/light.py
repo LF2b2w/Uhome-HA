@@ -137,12 +137,14 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from coordinator.
 
-        Clear optimistic on/off state unconditionally since on/off commands
-        apply instantly. For brightness, only clear once the device reports
-        back the value we sent — the device can take a few seconds to update
-        and the first poll after a command often still returns the old value.
+        For both on/off and brightness, only clear optimistic state once the
+        device confirms the new value — the first poll after a command often
+        still returns the old value.
         """
-        self._optimistic_is_on = None
+        if self._optimistic_is_on is not None:
+            if self._optimistic_is_on == self._device.is_on:
+                self._optimistic_is_on = None
+            # else: keep optimistic state until device catches up
 
         pending = self._pending_brightness_utec
         if pending is not None:

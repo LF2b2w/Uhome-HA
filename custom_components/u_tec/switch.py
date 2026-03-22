@@ -73,7 +73,10 @@ class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
 
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from coordinator, clearing optimistic state."""
-        self._optimistic_is_on = None
+        if self._optimistic_is_on is not None:
+            if self._optimistic_is_on == self._device.is_on:
+                self._optimistic_is_on = None
+            # else: keep optimistic state until device catches up
         super()._handle_coordinator_update()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
