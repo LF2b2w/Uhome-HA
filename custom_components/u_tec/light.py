@@ -180,8 +180,6 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
                 brightness_255 = kwargs[ATTR_BRIGHTNESS]
                 utec_brightness = max(1, int((brightness_255 / 255) * 100))
                 turn_on_args["brightness"] = utec_brightness
-                self._optimistic_brightness = brightness_255
-                self._pending_brightness_utec = utec_brightness
 
             if ATTR_RGB_COLOR in kwargs:
                 turn_on_args["rgb_color"] = kwargs[ATTR_RGB_COLOR]
@@ -191,6 +189,9 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
 
             await self._device.turn_on(**turn_on_args)
             self._optimistic_is_on = True
+            if "brightness" in turn_on_args:
+                self._optimistic_brightness = kwargs[ATTR_BRIGHTNESS]
+                self._pending_brightness_utec = turn_on_args["brightness"]
             self.async_write_ha_state()
 
         except DeviceError as err:
