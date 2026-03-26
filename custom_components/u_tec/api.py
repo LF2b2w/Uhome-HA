@@ -184,25 +184,19 @@ class AsyncPushUpdateHandler:
                 _LOGGER.error("Failed to parse webhook JSON: %s", json_err)
                 return web.Response(status=400)
 
-            # Validate the push secret if we have one registered.
-            # We don't know exactly where U-Tec puts the access_token in their
-            # push payload, so we check a few likely locations. If it's missing
-            # entirely we warn but still process (since the field location is
-            # unconfirmed). If it's present but wrong we reject with 403.
-            if self._push_secret is not None and isinstance(data, dict):
-                incoming_token = (
-                    data.get("access_token")
-                    or data.get("header", {}).get("access_token")
-                    or data.get("payload", {}).get("access_token")
-                )
-                if incoming_token is None:
+            # Validate the push secret via the Authorization header.
+            # U-Tec sends it as "Bearer <access_token>" in the HTTP header.
+            if self._push_secret is not None:
+                auth_header = request.headers.get("Authorization", "")
+                incoming_token = auth_header.removeprefix("Bearer ").strip()
+                if not incoming_token:
                     _LOGGER.warning(
-                        "Webhook received with no access_token in payload -- "
-                        "processing anyway since token field location is unconfirmed"
+                        "Webhook received with no Authorization header -- rejecting"
                     )
-                elif not secrets.compare_digest(incoming_token, self._push_secret):
+                    return web.Response(status=401)
+                if not secrets.compare_digest(incoming_token, self._push_secret):
                     _LOGGER.error(
-                        "Webhook received with invalid access_token -- ignoring"
+                        "Webhook received with invalid Bearer token -- rejecting"
                     )
                     return web.Response(status=403)
 
