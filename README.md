@@ -27,33 +27,26 @@ A Home Assistant integration for U-Tec smart home devices via the Uhome API that
 - API Credentials
 - External Access Configured (ie., Nabu Casa)
 
+## Ensure Home Assistant knows its own URL
+For the Configuration step below to work, Home Assistant must know its own URL.
+
+Navigate to Settings > System > Network and set the Home Assistant URL (Normally `http://homeassistant.local:8123`)
+
 ## Getting Your Credentials
-#### Having your credentials is nessecary to configure the integration, so get them before you install it.
+#### Having your credentials is necessary to configure the integration, so get them before you install it.
+The new process is to activate your API credentials directly in the new XThings app.  From the menu, select your account (the top option with your name and email), then scroll to the bottom and select OpenAPI.  To activate you will be asked what type of role you have (e.g., Developer, Home User, etc), select Home User and the type of device you want to work on. This will automatically activate your account with API credentials and show you your `Client ID`, `Client Secret`, `Scope`, and `RedirectURI`.  
 
-Visit the [Developer Portal](https://developer.uhomelabs.com/hc/en-us/requests/new) and login using the same auth you use for your account. 
-*Note:* If you get an error about a page not being found, just ignore that and click on *Submit a Request* at the top.
-
-After authenticating, you will *Submit a Request* using the form. For *Request Category* you want to select *API credentials*. In the *Description* be sure to provide the address that is tied to your account to save some back-and-forth with Support. They will send you an NDA to fill out and sign that you must return in order to obtain this ability. Once this is completed it can take a few days to be activated.
-
-*Tip:* Mentioning you are working on a Home Assistant Integration is more than acceptable of a reason for them.
-
-Once your account is activated with API credentials, in your U-Home mobile app there will now be a section called *Develop Console*.  
-- There you will find your `Client ID`, `Client Secret`, `Scope`, and `RedirectURI`.
-- While you are in there update, or confirm, the value of `RedirectURI` is `https://my.home-assistant.io/redirect/oauth` and `scope` is set to `openapi`. 
+You **must** update the value of `RedirectURI` to `https://my.home-assistant.io/redirect/oauth` from the default of `http://localhost:9501`
 
 For the integration you will need `Client ID` and `Client Secret`.
 
 ## Installation
 ### HACS (Recommended)
+Ensure you have [HACS](https://hacs.xyz/docs/use/download/download/) installed\
 Open HACS in your Home Assistant instance\
-Click add custom repo\
-Paste the URL of this repo and choose type integration\
-Search for "U-tec"\
-Click "Install"
-#### Set up redirect URI in Uhome app
-In the Uhome app, in the *Develop Console* tab - \
-    Set redirect URI - `https://my.home-assistant.io/redirect/oauth`\
-Note: Enter this url exactly as it is here. Do not replace the hostname with your own home assistant.
+Search for "u-tec" and click on the integration\
+Click "Download"\
+Restart Home Assistant
 
 ### Manual Installation
 Download the repository\
@@ -61,14 +54,16 @@ Copy the custom_components/Homeassistant-utec folder to your Home Assistant's cu
 Restart Home Assistant
 
 ## Configuration
-In Home Assistant, go to Configuration > Integrations\
-Click the "+" button to add a new integration\
+In Home Assistant, go to Settings > Devices & services > Integrations\
+Click the "+ Add integration" button\
 Search for "U-Tec"\
-You will need to provide this information from the U-Home mobile app under Settings -> Develop Console :
+You will need to provide the credentials information from above:
+- API Scope (leave at the default 'openapi')
+- Name (e.g., U-Tec / Ultraloq)
 - Client ID
 - Client Secret
-- API Scope (default: 'openapi')
 
+When you submit, you will be taken to the U-Tec [OAuth site](https://oauth.u-tec.com/login/auth) where you need to login with your U-Tec username and password.  That will then ask you to authorize the OAuth connection.  After that it will take you back to Home Assistant and ask you to link your account to Home Assistant.
 
 ## Troubleshooting
 See [FAQ](https://github.com/LF2b2w/Uhome-HA/discussions/2)
