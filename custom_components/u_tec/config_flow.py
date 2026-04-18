@@ -19,6 +19,10 @@ from homeassistant.helpers.selector import (
 )
 from homeassistant.util import Mapping
 
+from utec_py.devices.light import Light as UhomeLight
+from utec_py.devices.lock import Lock as UhomeLock
+from utec_py.devices.switch import Switch as UhomeSwitch
+
 from .const import (
     CONF_API_SCOPE,
     CONF_HA_DEVICES,
@@ -273,10 +277,88 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Dispatch to the next pending picker, or finalise."""
         if not self._pending_pickers:
             return self.async_create_entry(title="", data=self.options)
-        # Picker step names are added in Task 7. For this task, finalise
-        # regardless — falling through to create_entry keeps the mode step
-        # functional before Task 7 lands.
-        return self.async_create_entry(title="", data=self.options)
+        next_key = self._pending_pickers[0]
+        dispatch = {
+            CONF_OPTIMISTIC_LIGHTS: self.async_step_pick_lights,
+            CONF_OPTIMISTIC_SWITCHES: self.async_step_pick_switches,
+            CONF_OPTIMISTIC_LOCKS: self.async_step_pick_locks,
+        }
+        return await dispatch[next_key]()
+
+    async def _optimistic_picker_step(
+        self,
+        *,
+        step_id: str,
+        conf_key: str,
+        device_cls: type,
+        user_input: dict[str, Any] | None,
+    ) -> ConfigFlowResult:
+        """Render / handle a device-picker step for one device type."""
+        if user_input is not None:
+            self.options[conf_key] = user_input[conf_key]
+            self._pending_pickers.pop(0)
+            return await self._advance_optimistic_picker()
+
+        coordinator = self.hass.data[DOMAIN][self.config_entry.entry_id]["coordinator"]
+        devices = {
+            device_id: device.name
+            for device_id, device in coordinator.devices.items()
+            if isinstance(device, device_cls)
+        }
+
+        if not devices:
+            # No devices of this type to pick from — skip to next picker.
+            self.options[conf_key] = []
+            self._pending_pickers.pop(0)
+            return await self._advance_optimistic_picker()
+
+        stored = self.options.get(conf_key)
+        default = stored if isinstance(stored, list) else list(devices.keys())
+
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(conf_key, default=default): cv.multi_select(devices),
+                }
+            ),
+        )
+
+    async def async_step_pick_lights(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Pick which light devices are optimistic."""
+        return await self._optimistic_picker_step(
+            step_id="pick_lights",
+            conf_key=CONF_OPTIMISTIC_LIGHTS,
+            device_cls=UhomeLight,
+            user_input=user_input,
+        )
+
+    async def async_step_pick_switches(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Pick which switch devices are optimistic."""
+        return await self._optimistic_picker_step(
+            step_id="pick_switches",
+            conf_key=CONF_OPTIMISTIC_SWITCHES,
+            device_cls=UhomeSwitch,
+            user_input=user_input,
+        )
+
+    async def async_step_pick_locks(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Pick which lock devices are optimistic."""
+        return await self._optimistic_picker_step(
+            step_id="pick_locks",
+            conf_key=CONF_OPTIMISTIC_LOCKS,
+            device_cls=UhomeLock,
+            user_input=user_input,
+        )
 
     async def async_step_get_devices(
         self,
