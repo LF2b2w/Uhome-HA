@@ -14,7 +14,12 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from utec_py.devices.switch import Switch as UhomeSwitch
 from utec_py.exceptions import DeviceError
 
-from .const import DOMAIN, SIGNAL_DEVICE_UPDATE
+from .const import (
+    CONF_OPTIMISTIC_SWITCHES,
+    DOMAIN,
+    SIGNAL_DEVICE_UPDATE,
+    is_optimistic_enabled,
+)
 from .coordinator import UhomeDataUpdateCoordinator
 
 # define our own logger so we don't import the private internal logger, and instead use a module logger
@@ -59,6 +64,14 @@ class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
         self._attr_has_entity_name = True
         self._optimistic_is_on: bool | None = None
 
+    def _is_optimistic(self) -> bool:
+        """Return True if optimistic updates apply to this device."""
+        return is_optimistic_enabled(
+            self.coordinator.config_entry.options,
+            CONF_OPTIMISTIC_SWITCHES,
+            self._device.device_id,
+        )
+
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
@@ -70,6 +83,11 @@ class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
         if self._optimistic_is_on is not None:
             return self._optimistic_is_on
         return self._device.is_on
+
+    @property
+    def assumed_state(self) -> bool:
+        """Return True if the current state is optimistic rather than confirmed."""
+        return self._is_optimistic()
 
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from coordinator, clearing optimistic state."""
@@ -84,8 +102,9 @@ class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
         _LOGGER.debug("Turning on switch %s", self._device.device_id)
         try:
             await self._device.turn_on()
-            self._optimistic_is_on = True
-            self.async_write_ha_state()
+            if self._is_optimistic():
+                self._optimistic_is_on = True
+                self.async_write_ha_state()
         except DeviceError as err:
             _LOGGER.error(
                 "Failed to turn on switch %s: %s", self._device.device_id, err
@@ -97,8 +116,9 @@ class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
         _LOGGER.debug("Turning off switch %s", self._device.device_id)
         try:
             await self._device.turn_off()
-            self._optimistic_is_on = False
-            self.async_write_ha_state()
+            if self._is_optimistic():
+                self._optimistic_is_on = False
+                self.async_write_ha_state()
         except DeviceError as err:
             _LOGGER.error(
                 "Failed to turn off switch %s: %s", self._device.device_id, err
