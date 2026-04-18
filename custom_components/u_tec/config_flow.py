@@ -9,7 +9,7 @@ from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
 from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import config_entry_oauth2_flow, selector
+from homeassistant.helpers import config_entry_oauth2_flow
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.selector import (
     BooleanSelector,
@@ -19,6 +19,7 @@ from homeassistant.helpers.selector import (
 )
 from homeassistant.util import Mapping
 
+from utec_py.devices.device import BaseDevice
 from utec_py.devices.light import Light as UhomeLight
 from utec_py.devices.lock import Lock as UhomeLock
 from utec_py.devices.switch import Switch as UhomeSwitch
@@ -50,7 +51,7 @@ OPTIMISTIC_MODE_CUSTOM = "custom"
 OPTIMISTIC_MODES = [OPTIMISTIC_MODE_ALL, OPTIMISTIC_MODE_NONE, OPTIMISTIC_MODE_CUSTOM]
 
 
-def _current_mode(value):
+def _current_mode(value: bool | list[str] | None) -> str:
     """Infer the mode selector default from a stored option value."""
     if value is True or value is None:
         return OPTIMISTIC_MODE_ALL
@@ -290,7 +291,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         *,
         step_id: str,
         conf_key: str,
-        device_cls: type,
+        device_cls: type[BaseDevice],
         user_input: dict[str, Any] | None,
     ) -> ConfigFlowResult:
         """Render / handle a device-picker step for one device type."""

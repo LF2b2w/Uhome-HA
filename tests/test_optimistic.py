@@ -2,6 +2,8 @@
 
 from optimistic import (
     CONF_OPTIMISTIC_LIGHTS,
+    CONF_OPTIMISTIC_LOCKS,
+    CONF_OPTIMISTIC_SWITCHES,
     DEFAULT_OPTIMISTIC,
     is_optimistic_enabled,
 )
@@ -42,8 +44,11 @@ def test_empty_list_returns_false():
 
 def test_different_keys_resolve_independently():
     options = {
-        "optimistic_lights": True,
-        "optimistic_switches": False,
+        CONF_OPTIMISTIC_LIGHTS: True,
+        CONF_OPTIMISTIC_SWITCHES: False,
+        CONF_OPTIMISTIC_LOCKS: ["dev-1"],
     }
-    assert is_optimistic_enabled(options, "optimistic_lights", "dev-1") is True
-    assert is_optimistic_enabled(options, "optimistic_switches", "dev-1") is False
+    assert is_optimistic_enabled(options, CONF_OPTIMISTIC_LIGHTS, "dev-1") is True
+    assert is_optimistic_enabled(options, CONF_OPTIMISTIC_SWITCHES, "dev-1") is False
+    assert is_optimistic_enabled(options, CONF_OPTIMISTIC_LOCKS, "dev-1") is True
+    assert is_optimistic_enabled(options, CONF_OPTIMISTIC_LOCKS, "dev-2") is False

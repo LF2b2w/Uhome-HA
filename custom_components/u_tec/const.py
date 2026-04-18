@@ -1,5 +1,13 @@
 """Constants for the Uhome integration."""
 
+from .optimistic import (
+    CONF_OPTIMISTIC_LIGHTS,
+    CONF_OPTIMISTIC_SWITCHES,
+    CONF_OPTIMISTIC_LOCKS,
+    DEFAULT_OPTIMISTIC,
+    is_optimistic_enabled,
+)
+
 DOMAIN = "u_tec"
 
 CONF_SCAN_INTERVAL = "scan_interval"
@@ -24,11 +32,3 @@ SIGNAL_DEVICE_UPDATE = f"{DOMAIN}_device_update"
 
 WEBHOOK_ID_PREFIX = "u_tec_push_"
 WEBHOOK_HANDLER = 'u_tec_webhook_handler'
-
-from .optimistic import (  # noqa: E402 (re-export for package consumers)
-    CONF_OPTIMISTIC_LIGHTS,
-    CONF_OPTIMISTIC_SWITCHES,
-    CONF_OPTIMISTIC_LOCKS,
-    DEFAULT_OPTIMISTIC,
-    is_optimistic_enabled,
-)
