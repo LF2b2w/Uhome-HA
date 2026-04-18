@@ -11,12 +11,20 @@ from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_entry_oauth2_flow, selector
 import homeassistant.helpers.config_validation as cv
-from homeassistant.helpers.selector import BooleanSelector
+from homeassistant.helpers.selector import (
+    BooleanSelector,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 from homeassistant.util import Mapping
 
 from .const import (
     CONF_API_SCOPE,
     CONF_HA_DEVICES,
+    CONF_OPTIMISTIC_LIGHTS,
+    CONF_OPTIMISTIC_LOCKS,
+    CONF_OPTIMISTIC_SWITCHES,
     CONF_PUSH_DEVICES,
     CONF_PUSH_ENABLED,
     DEFAULT_API_SCOPE,
@@ -30,6 +38,21 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Optional(CONF_API_SCOPE, default=DEFAULT_API_SCOPE): str,
     }
 )
+
+
+OPTIMISTIC_MODE_ALL = "all"
+OPTIMISTIC_MODE_NONE = "none"
+OPTIMISTIC_MODE_CUSTOM = "custom"
+OPTIMISTIC_MODES = [OPTIMISTIC_MODE_ALL, OPTIMISTIC_MODE_NONE, OPTIMISTIC_MODE_CUSTOM]
+
+
+def _current_mode(value):
+    """Infer the mode selector default from a stored option value."""
+    if value is True or value is None:
+        return OPTIMISTIC_MODE_ALL
+    if value is False:
+        return OPTIMISTIC_MODE_NONE
+    return OPTIMISTIC_MODE_CUSTOM
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -124,6 +147,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         self.api = None
         self.devices = {}
         self.options = dict(config_entry.options)
+        self._pending_pickers: list[str] = []
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -133,7 +157,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             step_id="init",
             menu_options={
                 "update_push": "Update Push Status",
-                "get_devices": "Select Active Devices"},
+                "get_devices": "Select Active Devices",
+                "optimistic_updates": "Configure Optimistic Updates",
+            },
         )
 
     async def async_step_update_push(
@@ -198,6 +224,59 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 "devices": ", ".join(self.devices.values()),
             },
         )
+
+    async def async_step_optimistic_updates(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Configure optimistic updates per device type."""
+        mode_selector = SelectSelector(
+            SelectSelectorConfig(
+                options=OPTIMISTIC_MODES,
+                mode=SelectSelectorMode.DROPDOWN,
+                translation_key="optimistic_mode",
+            )
+        )
+
+        if user_input is not None:
+            self._pending_pickers = []
+            for conf_key, field in (
+                (CONF_OPTIMISTIC_LIGHTS, "lights_mode"),
+                (CONF_OPTIMISTIC_SWITCHES, "switches_mode"),
+                (CONF_OPTIMISTIC_LOCKS, "locks_mode"),
+            ):
+                mode = user_input[field]
+                if mode == OPTIMISTIC_MODE_ALL:
+                    self.options[conf_key] = True
+                elif mode == OPTIMISTIC_MODE_NONE:
+                    self.options[conf_key] = False
+                elif mode == OPTIMISTIC_MODE_CUSTOM:
+                    self._pending_pickers.append(conf_key)
+            return await self._advance_optimistic_picker()
+
+        lights_default = _current_mode(self.options.get(CONF_OPTIMISTIC_LIGHTS))
+        switches_default = _current_mode(self.options.get(CONF_OPTIMISTIC_SWITCHES))
+        locks_default = _current_mode(self.options.get(CONF_OPTIMISTIC_LOCKS))
+
+        return self.async_show_form(
+            step_id="optimistic_updates",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("lights_mode", default=lights_default): mode_selector,
+                    vol.Required("switches_mode", default=switches_default): mode_selector,
+                    vol.Required("locks_mode", default=locks_default): mode_selector,
+                }
+            ),
+        )
+
+    async def _advance_optimistic_picker(self) -> ConfigFlowResult:
+        """Dispatch to the next pending picker, or finalise."""
+        if not self._pending_pickers:
+            return self.async_create_entry(title="", data=self.options)
+        # Picker step names are added in Task 7. For this task, finalise
+        # regardless — falling through to create_entry keeps the mode step
+        # functional before Task 7 lands.
+        return self.async_create_entry(title="", data=self.options)
 
     async def async_step_get_devices(
         self,

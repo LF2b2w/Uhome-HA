@@ -53,7 +53,25 @@
           "data": {
             "selected_devices": "Devices"
           }
+        },
+        "optimistic_updates": {
+          "title": "Optimistic Updates",
+          "description": "Pick how each device type should reflect commands. 'All' writes optimistic state for every device of that type, 'None' waits for confirmed state, 'Custom' lets you pick specific devices.",
+          "data": {
+            "lights_mode": "Lights",
+            "switches_mode": "Switches",
+            "locks_mode": "Locks"
+          }
         }
       }
+  },
+  "selector": {
+    "optimistic_mode": {
+      "options": {
+        "all": "All devices optimistic",
+        "none": "No devices optimistic",
+        "custom": "Custom per-device"
+      }
+    }
   }
 }
