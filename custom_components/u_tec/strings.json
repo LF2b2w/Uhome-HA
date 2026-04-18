@@ -62,6 +62,27 @@
             "switches_mode": "Switches",
             "locks_mode": "Locks"
           }
+        },
+        "pick_lights": {
+          "title": "Optimistic Lights",
+          "description": "Select the light devices that should use optimistic updates. Unselected lights will wait for confirmed state.",
+          "data": {
+            "optimistic_lights": "Optimistic lights"
+          }
+        },
+        "pick_switches": {
+          "title": "Optimistic Switches",
+          "description": "Select the switch devices that should use optimistic updates. Unselected switches will wait for confirmed state.",
+          "data": {
+            "optimistic_switches": "Optimistic switches"
+          }
+        },
+        "pick_locks": {
+          "title": "Optimistic Locks",
+          "description": "Select the lock devices that should use optimistic updates. Unselected locks will wait for confirmed state.",
+          "data": {
+            "optimistic_locks": "Optimistic locks"
+          }
         }
       }
   },
