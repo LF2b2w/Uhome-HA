@@ -21,7 +21,12 @@ from homeassistant.util.color import value_to_brightness
 from utec_py.devices.light import Light as UhomeLight
 from utec_py.exceptions import DeviceError
 
-from .const import DOMAIN, SIGNAL_DEVICE_UPDATE
+from .const import (
+    CONF_OPTIMISTIC_LIGHTS,
+    DOMAIN,
+    SIGNAL_DEVICE_UPDATE,
+    is_optimistic_enabled,
+)
 from .coordinator import UhomeDataUpdateCoordinator
 
 # use module-level logger
@@ -113,6 +118,14 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
         else:
             self._attr_color_mode = ColorMode.ONOFF
 
+    def _is_optimistic(self) -> bool:
+        """Return True if optimistic updates apply to this device."""
+        return is_optimistic_enabled(
+            self.coordinator.config_entry.options,
+            CONF_OPTIMISTIC_LIGHTS,
+            self._device.device_id,
+        )
+
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
@@ -133,6 +146,11 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
         if self._device.brightness is None:
             return None
         return value_to_brightness(BRIGHTNESS_SCALE, self._device.brightness)
+
+    @property
+    def assumed_state(self) -> bool:
+        """Return True if the current state is optimistic rather than confirmed."""
+        return self._is_optimistic()
 
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from coordinator.
@@ -188,11 +206,13 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
                 turn_on_args["color_temp"] = kwargs[ATTR_COLOR_TEMP_KELVIN]
 
             await self._device.turn_on(**turn_on_args)
-            self._optimistic_is_on = True
-            if "brightness" in turn_on_args:
-                self._optimistic_brightness = kwargs[ATTR_BRIGHTNESS]
-                self._pending_brightness_utec = turn_on_args["brightness"]
-            self.async_write_ha_state()
+
+            if self._is_optimistic():
+                self._optimistic_is_on = True
+                if "brightness" in turn_on_args:
+                    self._optimistic_brightness = kwargs[ATTR_BRIGHTNESS]
+                    self._pending_brightness_utec = turn_on_args["brightness"]
+                self.async_write_ha_state()
 
         except DeviceError as err:
             _LOGGER.error("Failed to turn on light %s: %s", self._device.device_id, err)
@@ -203,8 +223,9 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
         _LOGGER.debug("Turning off light %s", self._device.device_id)
         try:
             await self._device.turn_off()
-            self._optimistic_is_on = False
-            self.async_write_ha_state()
+            if self._is_optimistic():
+                self._optimistic_is_on = False
+                self.async_write_ha_state()
         except DeviceError as err:
             _LOGGER.error(
                 "Failed to turn off light %s: %s", self._device.device_id, err
