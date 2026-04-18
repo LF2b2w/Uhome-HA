@@ -14,7 +14,12 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from utec_py.devices.lock import Lock as UhomeLock
 from utec_py.exceptions import DeviceError
 
-from .const import DOMAIN, SIGNAL_DEVICE_UPDATE
+from .const import (
+    CONF_OPTIMISTIC_LOCKS,
+    DOMAIN,
+    SIGNAL_DEVICE_UPDATE,
+    is_optimistic_enabled,
+)
 from .coordinator import UhomeDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -58,6 +63,14 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         self._attr_has_entity_name = True
         self._optimistic_is_locked: bool | None = None
 
+    def _is_optimistic(self) -> bool:
+        """Return True if optimistic updates apply to this device."""
+        return is_optimistic_enabled(
+            self.coordinator.config_entry.options,
+            CONF_OPTIMISTIC_LOCKS,
+            self._device.device_id,
+        )
+
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
@@ -74,6 +87,11 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
     def is_jammed(self) -> bool:
         """Return true if the lock is jammed."""
         return self._device.is_jammed
+
+    @property
+    def assumed_state(self) -> bool:
+        """Return True if the current state is optimistic rather than confirmed."""
+        return self._is_optimistic()
 
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from coordinator, clearing optimistic state.
@@ -111,8 +129,9 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         _LOGGER.debug("Locking device %s", self._device.device_id)
         try:
             await self._device.lock()
-            self._optimistic_is_locked = True
-            self.async_write_ha_state()
+            if self._is_optimistic():
+                self._optimistic_is_locked = True
+                self.async_write_ha_state()
         except DeviceError as err:
             _LOGGER.error("Failed to lock device %s: %s", self._device.device_id, err)
             raise HomeAssistantError(f"Failed to lock: {err}") from err
@@ -122,8 +141,9 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         _LOGGER.debug("Unlocking device %s", self._device.device_id)
         try:
             await self._device.unlock()
-            self._optimistic_is_locked = False
-            self.async_write_ha_state()
+            if self._is_optimistic():
+                self._optimistic_is_locked = False
+                self.async_write_ha_state()
         except DeviceError as err:
             _LOGGER.error("Failed to unlock device %s: %s", self._device.device_id, err)
             raise HomeAssistantError(f"Failed to unlock: {err}") from err
