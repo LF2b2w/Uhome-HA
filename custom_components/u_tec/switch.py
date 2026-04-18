@@ -86,8 +86,8 @@ class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
 
     @property
     def assumed_state(self) -> bool:
-        """Return True if the current state is optimistic rather than confirmed."""
-        return self._is_optimistic()
+        """Return True if the current reported state is optimistic and unconfirmed."""
+        return self._is_optimistic() and self._optimistic_is_on is not None
 
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from coordinator, clearing optimistic state."""
