@@ -1,5 +1,7 @@
 # Uhome (U-Tec) Home Assistant Integration
 
+> **Fork notice:** This is a fork of [LF2b2w/Uhome-HA](https://github.com/LF2b2w/Uhome-HA), the original repository by [@LF2b2w](https://github.com/LF2b2w). The upstream project currently appears to be unmaintained, so this fork exists to keep the integration working. Any changes made here will be offered back to the upstream repository should it become responsive again.
+
 A Home Assistant integration for U-Tec smart home devices via the Uhome API that allows you to control your locks, lights, switches, and sensors through Home Assistant.
 
 ## Device Types
