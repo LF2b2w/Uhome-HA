@@ -1,10 +1,11 @@
 """Support for Uhome locks."""
 
+import logging
 from typing import Any, cast
 
 from homeassistant.components.lock import LockEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import _LOGGER, HomeAssistant, callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo
@@ -15,6 +16,8 @@ from utec_py.exceptions import DeviceError
 
 from .const import DOMAIN, SIGNAL_DEVICE_UPDATE
 from .coordinator import UhomeDataUpdateCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -27,7 +30,6 @@ async def async_setup_entry(
         "coordinator"
     ]
 
-    # Add all locks
     async_add_entities(
         UhomeLockEntity(coordinator, device_id)
         for device_id, device in coordinator.devices.items()
@@ -37,6 +39,8 @@ async def async_setup_entry(
 
 class UhomeLockEntity(CoordinatorEntity, LockEntity):
     """Representation of a Uhome lock."""
+
+    _optimistic_is_locked: bool | None = None
 
     def __init__(self, coordinator: UhomeDataUpdateCoordinator, device_id: str) -> None:
         """Initialize the lock."""
@@ -52,6 +56,7 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
             hw_version=self._device.hw_version,
         )
         self._attr_has_entity_name = True
+        self._optimistic_is_locked: bool | None = None
 
     @property
     def available(self) -> bool:
@@ -61,61 +66,72 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
     @property
     def is_locked(self) -> bool:
         """Return true if the lock is locked."""
+        if self._optimistic_is_locked is not None:
+            return self._optimistic_is_locked
         return self._device.is_locked
-
-    @property
-    def is_open(self) -> bool:
-        """Return true if the lock is open."""
-        return self._device.is_open
 
     @property
     def is_jammed(self) -> bool:
         """Return true if the lock is jammed."""
         return self._device.is_jammed
 
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from coordinator, clearing optimistic state.
+
+        Lock/unlock commands are slow (physical deadbolt movement) so we only
+        clear the optimistic state once the device confirms the new lockState,
+        rather than on the first poll which may still return the old value.
+        """
+        if self._optimistic_is_locked is not None:
+            confirmed = (
+                self._optimistic_is_locked and self._device.is_locked
+                or not self._optimistic_is_locked and not self._device.is_locked
+            )
+            if confirmed:
+                self._optimistic_is_locked = None
+            # else: keep optimistic state until device catches up
+        super()._handle_coordinator_update()
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return the state attributes of the lock."""
-        # Get values and ensure they're not sequences
-        lock_state = self._device.lock_state
-        door_state = self._device.door_state
-
-        # Only include lock_mode if has_door_sensor is True
         attributes = {
-            "lock_state": str(lock_state) if lock_state is not None else None,
-            "door_state": str(door_state) if door_state is not None else None,
+            "lock_state": self._device.lock_state,
+            "lock_mode": self._device.lock_mode,
+            "battery_level": self._device.battery_level,
+            "battery_status": self._device.battery_status,
         }
-
-        # Add lock_mode conditionally
         if self._device.has_door_sensor:
-            lock_mode = self._device.lock_mode
-            attributes["lock_mode"] = str(lock_mode) if lock_mode is not None else None
-
+            attributes["door_state"] = self._device.door_state
+            attributes["is_door_open"] = self._device.is_door_open
         return attributes
 
-    async def async_lock(self) -> None:
+    async def async_lock(self, **kwargs: Any) -> None:
         """Lock the device."""
+        _LOGGER.debug("Locking device %s", self._device.device_id)
         try:
             await self._device.lock()
-            await self.coordinator.async_request_refresh()
+            self._optimistic_is_locked = True
+            self.async_write_ha_state()
         except DeviceError as err:
             _LOGGER.error("Failed to lock device %s: %s", self._device.device_id, err)
             raise HomeAssistantError(f"Failed to lock: {err}") from err
 
-    async def async_unlock(self) -> None:
+    async def async_unlock(self, **kwargs: Any) -> None:
         """Unlock the device."""
+        _LOGGER.debug("Unlocking device %s", self._device.device_id)
         try:
             await self._device.unlock()
-            await self.coordinator.async_request_refresh()
+            self._optimistic_is_locked = False
+            self.async_write_ha_state()
         except DeviceError as err:
             _LOGGER.error("Failed to unlock device %s: %s", self._device.device_id, err)
-            raise HomeAssistantError(f"Failed to lock: {err}") from err
+            raise HomeAssistantError(f"Failed to unlock: {err}") from err
 
     async def async_added_to_hass(self):
         """Register callbacks."""
         await super().async_added_to_hass()
 
-        # Register update callback for push notifications
         self.async_on_remove(
             async_dispatcher_connect(
                 self.hass,

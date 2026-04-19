@@ -41,7 +41,7 @@ class UhomeOAuth2FlowHandler(
     """Config flow to handle Uhome OAuth2 authentication."""
 
     DOMAIN = DOMAIN
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self) -> None:
         """Initialize Uhome OAuth2 flow."""
@@ -245,14 +245,4 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         )
 
 
-async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
-    """Migrate old config entries to current version."""
-    if config_entry.version < 2:
-        new_data = {**config_entry.data}
-        # Remove raw secrets from legacy entries
-        new_data.pop(CONF_CLIENT_SECRET, None)
-        new_data.pop(CONF_CLIENT_ID, None)
-        hass.config_entries.async_update_entry(
-            config_entry, data=new_data, version=2, minor_version=1
-        )
-    return True
+
