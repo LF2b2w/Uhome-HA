@@ -1,0 +1,30 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    # pytest-homeassistant-custom-component emits these; they're noise.
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["custom_components/u_tec"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+fail_under = 85
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "def __repr__",
+    "def __str__",
+    "@(abc\\.)?abstractmethod",
+    # Defensive log-only catch-alls
+    "except Exception:  # noqa: BLE001",
+    "logger\\.exception",
+]
