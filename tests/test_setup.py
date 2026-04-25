@@ -88,3 +88,39 @@ async def test_setup_entry_skips_webhook_when_push_disabled(
         await async_setup_entry(hass, entry)
 
     mock_register.assert_not_awaited()
+
+
+# --- Push-enabled webhook registration ---
+
+
+async def test_setup_entry_registers_webhook_when_push_enabled(
+    hass, patched_uhomeapi,
+):
+    entry = make_config_entry(options={CONF_PUSH_ENABLED: True})
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.u_tec.config_entry_oauth2_flow.async_get_config_entry_implementation"
+    ), patch(
+        "custom_components.u_tec.config_entry_oauth2_flow.OAuth2Session"
+    ) as mock_session, patch(
+        "custom_components.u_tec.aiohttp_client.async_get_clientsession",
+        return_value=MagicMock(),
+    ), patch(
+        "custom_components.u_tec.api.AsyncPushUpdateHandler.async_register_webhook",
+        new=AsyncMock(return_value=True),
+    ) as mock_register, patch(
+        "custom_components.u_tec.coordinator.UhomeDataUpdateCoordinator.async_config_entry_first_refresh",
+        new=AsyncMock(return_value=None),
+    ), patch(
+        "custom_components.u_tec.coordinator.UhomeDataUpdateCoordinator.async_start_periodic_discovery",
+        new=AsyncMock(return_value=None),
+    ), patch.object(
+        hass.config_entries,
+        "async_forward_entry_setups",
+        new=AsyncMock(return_value=None),
+    ):
+        mock_session.return_value = MagicMock()
+        await async_setup_entry(hass, entry)
+
+    mock_register.assert_awaited_once()
