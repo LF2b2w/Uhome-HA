@@ -129,3 +129,31 @@ async def test_flow_aborts_when_already_configured(hass):
     assert result["type"] in ("abort", "form")
     if result["type"] == "abort":
         assert result["reason"] in ("already_configured", "single_instance_allowed")
+
+
+# ---------------------------------------------------------------------------
+# Reauth tests
+# ---------------------------------------------------------------------------
+
+
+async def test_reauth_starts_flow_with_existing_entry(hass):
+    """async_step_reauth delegates to async_step_reauth_confirm and returns a form."""
+    from custom_components.u_tec.config_flow import UhomeOAuth2FlowHandler
+
+    handler = UhomeOAuth2FlowHandler()
+    handler.hass = hass
+    entry_data = {"auth_implementation": "u_tec", "token": {"access_token": "old"}}
+    result = await handler.async_step_reauth(entry_data)
+    # async_step_reauth delegates to async_step_reauth_confirm which shows a form
+    assert result["type"] in ("form", "external")
+
+
+async def test_reauth_confirm_shows_form(hass):
+    """async_step_reauth_confirm with no user_input returns a reauth_confirm form."""
+    from custom_components.u_tec.config_flow import UhomeOAuth2FlowHandler
+
+    handler = UhomeOAuth2FlowHandler()
+    handler.hass = hass
+    result = await handler.async_step_reauth_confirm()
+    assert result["type"] == "form"
+    assert result["step_id"] == "reauth_confirm"
