@@ -142,3 +142,37 @@ async def test_optimistic_custom_for_lights(hass):
     assert result["data"][CONF_OPTIMISTIC_LIGHTS] == ["light-1"]
     assert result["data"][CONF_OPTIMISTIC_SWITCHES] is True
     assert result["data"][CONF_OPTIMISTIC_LOCKS] is True
+
+
+# --- Optimistic picker: none-mode ---
+
+
+async def test_optimistic_none_skips_picker(hass):
+    """Mode='none' for a type stores False and does NOT route to its picker step."""
+    entry = make_config_entry()
+    entry.add_to_hass(hass)
+
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+        "coordinator": MagicMock(devices={
+            "light-1": make_fake_light("light-1"),
+        }),
+    }
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    flow_id = result["flow_id"]
+    result = await hass.config_entries.options.async_configure(
+        flow_id, user_input={"next_step_id": "optimistic_updates"},
+    )
+
+    # Lights=none, switches=all, locks=all — no picker fires, goes straight to create_entry
+    result = await hass.config_entries.options.async_configure(
+        flow_id, user_input={
+            "lights_mode": "none",
+            "switches_mode": "all",
+            "locks_mode": "all",
+        },
+    )
+    assert result["type"] == "create_entry"
+    assert result["data"][CONF_OPTIMISTIC_LIGHTS] is False
+    assert result["data"][CONF_OPTIMISTIC_SWITCHES] is True
+    assert result["data"][CONF_OPTIMISTIC_LOCKS] is True
