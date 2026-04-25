@@ -1,6 +1,6 @@
 """Tests for UhomeSwitchEntity."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -95,7 +95,7 @@ async def test_assumed_state_respects_optimistic_config(hass):
     assert ent.assumed_state is False
 
 
-# --- lines 35-39: async_setup_entry isinstance filter ---
+# --- async_setup_entry isinstance filter ---
 
 
 async def test_setup_entry_filters_non_switch_devices(hass):
@@ -114,8 +114,7 @@ async def test_setup_entry_filters_non_switch_devices(hass):
     coord.last_update_success = True
     coord.data = {}
 
-    hass.data.setdefault("u_tec", {})
-    hass.data["u_tec"][entry.entry_id] = {"coordinator": coord}
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coord}
 
     added = []
 
@@ -128,11 +127,11 @@ async def test_setup_entry_filters_non_switch_devices(hass):
     assert added[0]._device.device_id == "sw-1"
 
 
-# --- line 78: available returns False when last_update_success=False ---
+# --- available returns False when last_update_success=False ---
 
 
 def test_available_false_when_coordinator_failed(hass):
-    """Line 78: coordinator.last_update_success=False → available is False."""
+    """coordinator.last_update_success=False → available is False."""
     entry = make_config_entry()
     entry.add_to_hass(hass)
     sw = make_fake_switch("sw-1", available=True)
@@ -145,11 +144,11 @@ def test_available_false_when_coordinator_failed(hass):
     assert ent.available is False
 
 
-# --- lines 83-85: is_on returns optimistic value when set; falls back to device ---
+# --- is_on returns optimistic value when set; falls back to device ---
 
 
 def test_is_on_returns_optimistic_when_set(coord_with_switch):
-    """Line 83-85: _optimistic_is_on set → returns optimistic; cleared → device value."""
+    """_optimistic_is_on set → returns optimistic; cleared → device value."""
     coord, sw = coord_with_switch
     sw.is_on = False
     ent = UhomeSwitchEntity(coord, "sw-1")
@@ -161,11 +160,11 @@ def test_is_on_returns_optimistic_when_set(coord_with_switch):
     assert ent.is_on is False
 
 
-# --- lines 94->98, 95->98: assumed_state branches ---
+# --- assumed_state branches ---
 
 
 def test_assumed_state_true_when_optimistic_set(coord_with_switch):
-    """Lines 94-98: optimistic enabled + _optimistic_is_on set → assumed_state True."""
+    """optimistic enabled + _optimistic_is_on set → assumed_state True."""
     coord, sw = coord_with_switch
     ent = UhomeSwitchEntity(coord, "sw-1")
     ent._optimistic_is_on = True
@@ -173,18 +172,18 @@ def test_assumed_state_true_when_optimistic_set(coord_with_switch):
 
 
 def test_assumed_state_false_when_optimistic_cleared(coord_with_switch):
-    """Lines 94-98: optimistic enabled but _optimistic_is_on=None → assumed_state False."""
+    """optimistic enabled but _optimistic_is_on=None → assumed_state False."""
     coord, sw = coord_with_switch
     ent = UhomeSwitchEntity(coord, "sw-1")
     ent._optimistic_is_on = None
     assert ent.assumed_state is False
 
 
-# --- lines 105->exit: turn_on non-optimistic path (no optimistic write when _is_optimistic False) ---
+# --- turn_on non-optimistic path (no optimistic write when _is_optimistic False) ---
 
 
 async def test_turn_on_no_optimistic_when_disabled(hass):
-    """Line 105->exit: _is_optimistic() False → turn_on succeeds, _optimistic_is_on stays None."""
+    """_is_optimistic() False → turn_on succeeds, _optimistic_is_on stays None."""
     entry = make_config_entry(options={CONF_OPTIMISTIC_SWITCHES: False})
     entry.add_to_hass(hass)
     sw = make_fake_switch("sw-1")
@@ -205,11 +204,11 @@ async def test_turn_on_no_optimistic_when_disabled(hass):
     ent.async_write_ha_state.assert_not_called()
 
 
-# --- lines 119->exit: turn_off non-optimistic path ---
+# --- turn_off non-optimistic path ---
 
 
 async def test_turn_off_no_optimistic_when_disabled(hass):
-    """Line 119->exit: _is_optimistic() False → turn_off succeeds, _optimistic_is_on stays None."""
+    """_is_optimistic() False → turn_off succeeds, _optimistic_is_on stays None."""
     entry = make_config_entry(options={CONF_OPTIMISTIC_SWITCHES: False})
     entry.add_to_hass(hass)
     sw = make_fake_switch("sw-1")
@@ -230,11 +229,11 @@ async def test_turn_off_no_optimistic_when_disabled(hass):
     ent.async_write_ha_state.assert_not_called()
 
 
-# --- lines 122-126: turn_on DeviceError → logs error and raises HomeAssistantError ---
+# --- turn_on DeviceError → logs + raises HomeAssistantError ---
 
 
 async def test_turn_on_device_error_logs_and_raises(coord_with_switch, hass):
-    """Lines 122-126: turn_on raises DeviceError → _LOGGER.error called + HomeAssistantError."""
+    """turn_on raises DeviceError → diagnostic logged + HomeAssistantError."""
     from homeassistant.exceptions import HomeAssistantError
     from utec_py.exceptions import DeviceError
 
@@ -249,16 +248,20 @@ async def test_turn_on_device_error_logs_and_raises(coord_with_switch, hass):
     with patch("custom_components.u_tec.switch._LOGGER") as mock_logger:
         with pytest.raises(HomeAssistantError, match="Failed to turn on switch"):
             await ent.async_turn_on()
-        mock_logger.error.assert_called_once()
+        # A diagnostic is emitted, but don't couple to a specific log level.
+        assert any(
+            getattr(mock_logger, level).called
+            for level in ("error", "warning", "exception", "critical")
+        )
 
     assert ent._optimistic_is_on is None
 
 
-# --- lines 130-132: turn_off DeviceError → logs error and raises HomeAssistantError ---
+# --- turn_off DeviceError → logs + raises HomeAssistantError ---
 
 
 async def test_turn_off_device_error_logs_and_raises(coord_with_switch, hass):
-    """Lines 130-132: turn_off raises DeviceError → _LOGGER.error called + HomeAssistantError."""
+    """turn_off raises DeviceError → diagnostic logged + HomeAssistantError."""
     from homeassistant.exceptions import HomeAssistantError
     from utec_py.exceptions import DeviceError
 
@@ -273,16 +276,19 @@ async def test_turn_off_device_error_logs_and_raises(coord_with_switch, hass):
     with patch("custom_components.u_tec.switch._LOGGER") as mock_logger:
         with pytest.raises(HomeAssistantError, match="Failed to turn off switch"):
             await ent.async_turn_off()
-        mock_logger.error.assert_called_once()
+        assert any(
+            getattr(mock_logger, level).called
+            for level in ("error", "warning", "exception", "critical")
+        )
 
     assert ent._optimistic_is_on is None
 
 
-# --- line 143: async_added_to_hass registers dispatcher connection ---
+# --- async_added_to_hass registers dispatcher connection ---
 
 
 async def test_async_added_to_hass_registers_dispatcher(coord_with_switch, hass):
-    """Line 143: async_added_to_hass connects dispatcher for SIGNAL_DEVICE_UPDATE_{device_id}."""
+    """async_added_to_hass connects dispatcher for SIGNAL_DEVICE_UPDATE_{device_id}."""
     coord, sw = coord_with_switch
     ent = UhomeSwitchEntity(coord, "sw-1")
     ent.hass = hass

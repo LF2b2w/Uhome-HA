@@ -1,7 +1,5 @@
 """Tests for UhomeDataUpdateCoordinator."""
 
-from unittest.mock import AsyncMock
-
 import pytest
 
 from custom_components.u_tec.coordinator import UhomeDataUpdateCoordinator

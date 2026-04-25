@@ -1,6 +1,6 @@
 """Tests for UhomeOAuth2FlowHandler initial flow."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -66,19 +66,13 @@ async def test_async_oauth_create_entry_builds_entry(hass):
     data = {"token": {"access_token": "tok", "refresh_token": "ref"}}
     result = await handler.async_oauth_create_entry(data)
 
-    # AbstractOAuth2FlowHandler.async_create_entry returns a dict with type
-    # "create_entry" (or occasionally "form"/"abort" on duplicate-unique-id).
-    assert result["type"] in ("create_entry", "form", "abort")
-
-    if result["type"] == "create_entry":
-        # Options must contain the three default keys set by the override.
-        options = result.get("options", {})
-        assert CONF_PUSH_ENABLED in options
-        assert options[CONF_PUSH_ENABLED] is True
-        assert CONF_PUSH_DEVICES in options
-        assert options[CONF_PUSH_DEVICES] == []
-        assert CONF_HA_DEVICES in options
-        assert options[CONF_HA_DEVICES] == []
+    assert result["type"] == "create_entry"
+    options = result["options"]
+    assert options[CONF_PUSH_ENABLED] is True
+    assert options[CONF_PUSH_DEVICES] == []
+    assert options[CONF_HA_DEVICES] == []
+    assert result["data"] == data
+    assert result["title"] == "u_tec"
 
 
 # ---------------------------------------------------------------------------
@@ -124,11 +118,8 @@ async def test_flow_aborts_when_already_configured(hass):
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
     )
-    # async_step_user calls self.async_abort(reason="single_instance_allowed")
-    # when entries already exist.
-    assert result["type"] in ("abort", "form")
-    if result["type"] == "abort":
-        assert result["reason"] in ("already_configured", "single_instance_allowed")
+    assert result["type"] == "abort"
+    assert result["reason"] == "single_instance_allowed"
 
 
 # ---------------------------------------------------------------------------
@@ -136,16 +127,24 @@ async def test_flow_aborts_when_already_configured(hass):
 # ---------------------------------------------------------------------------
 
 
-async def test_reauth_starts_flow_with_existing_entry(hass):
-    """async_step_reauth delegates to async_step_reauth_confirm and returns a form."""
+async def test_reauth_delegates_to_reauth_confirm(hass):
+    """async_step_reauth forwards entry_data to async_step_reauth_confirm."""
     from custom_components.u_tec.config_flow import UhomeOAuth2FlowHandler
 
     handler = UhomeOAuth2FlowHandler()
     handler.hass = hass
     entry_data = {"auth_implementation": "u_tec", "token": {"access_token": "old"}}
-    result = await handler.async_step_reauth(entry_data)
-    # async_step_reauth delegates to async_step_reauth_confirm which shows a form
-    assert result["type"] in ("form", "external")
+
+    sentinel = {"type": "form", "step_id": "reauth_confirm"}
+    with patch.object(
+        handler,
+        "async_step_reauth_confirm",
+        new=AsyncMock(return_value=sentinel),
+    ) as mock_confirm:
+        result = await handler.async_step_reauth(entry_data)
+
+    mock_confirm.assert_awaited_once_with(entry_data)
+    assert result is sentinel
 
 
 async def test_reauth_confirm_shows_form(hass):

@@ -1,6 +1,5 @@
 """Tests for async_migrate_entry."""
 
-import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.u_tec import async_migrate_entry

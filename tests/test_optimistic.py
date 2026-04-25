@@ -1,6 +1,6 @@
 """Unit tests for the optimistic-update resolver."""
 
-from optimistic import (
+from custom_components.u_tec.optimistic import (
     CONF_OPTIMISTIC_LIGHTS,
     CONF_OPTIMISTIC_LOCKS,
     CONF_OPTIMISTIC_SWITCHES,

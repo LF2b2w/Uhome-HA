@@ -1,11 +1,6 @@
 """Pytest setup for u_tec tests.
 
-Two test styles coexist:
-
-1. Standalone unit tests (e.g. test_optimistic.py) import the resolver
-   module directly via the sys.path insertion below.
-2. Integration tests import from `custom_components.u_tec.<module>` and
-   rely on fixtures defined here.
+All tests import via the package path: `from custom_components.u_tec... import ...`.
 """
 
 from __future__ import annotations
@@ -17,9 +12,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-# Path 1: standalone module import path (for test_optimistic.py).
-sys.path.insert(0, str(_REPO_ROOT / "custom_components" / "u_tec"))
-# Path 2: package import path (for `from custom_components.u_tec... import ...`).
 sys.path.insert(0, str(_REPO_ROOT))
 
 # pytest-homeassistant-custom-component ships its own `custom_components/`

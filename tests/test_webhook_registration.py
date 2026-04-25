@@ -1,8 +1,7 @@
 """Tests for AsyncPushUpdateHandler.async_register_webhook — URL resolution."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 from homeassistant.helpers.network import NoURLAvailableError
 
 from custom_components.u_tec.api import AsyncPushUpdateHandler
@@ -35,7 +34,7 @@ async def test_register_fails_when_no_url_available(hass, mock_uhome_api):
 
     with patch(
         "custom_components.u_tec.api.network.get_url",
-        side_effect=NoURLAvailableError(),
+        side_effect=NoURLAvailableError("no external URL configured"),
     ):
         result = await h.async_register_webhook(auth_data=MagicMock())
 
@@ -52,7 +51,7 @@ async def test_register_falls_back_through_url_strategies(hass, mock_uhome_api):
     def _get_url(*args, **kwargs):
         call_count[0] += 1
         if call_count[0] == 1:
-            raise NoURLAvailableError()
+            raise NoURLAvailableError("first strategy unavailable")
         return "https://cloud.example.com"
 
     with patch(

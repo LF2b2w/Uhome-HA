@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from custom_components.u_tec.diagnostics import async_get_config_entry_diagnostics
 from tests.common import make_config_entry, make_fake_lock
 

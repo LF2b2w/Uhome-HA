@@ -1,6 +1,5 @@
 """Tests for OptionsFlowHandler._current_mode helper."""
 
-import pytest
 from unittest.mock import MagicMock
 
 from custom_components.u_tec.config_flow import _current_mode

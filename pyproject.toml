@@ -1,11 +1,15 @@
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "-q"
 filterwarnings = [
-    # pytest-homeassistant-custom-component emits these; they're noise.
-    "ignore::DeprecationWarning",
-    "ignore::PendingDeprecationWarning",
+    # Silence pytest-homeassistant-custom-component / HA noise without hiding
+    # warnings against our own code.
+    "ignore::DeprecationWarning:pytest_homeassistant_custom_component",
+    "ignore::DeprecationWarning:homeassistant",
+    "ignore::PendingDeprecationWarning:pytest_homeassistant_custom_component",
+    "ignore::PendingDeprecationWarning:homeassistant",
 ]
 
 [tool.coverage.run]

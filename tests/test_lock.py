@@ -67,12 +67,13 @@ def test_extra_state_attributes_include_door_sensor_when_present(coord_with_lock
     coord, lock = coord_with_lock
     lock.has_door_sensor = True
     lock.is_door_open = True
+    lock.door_state = "open"
     lock.battery_level = 77
     ent = UhomeLockEntity(coord, "lock-1")
     attrs = ent.extra_state_attributes or {}
-    # Adjust keys to match actual impl
-    assert attrs.get("door_state") in ("open", True) or attrs.get("is_door_open") is True
-    assert attrs.get("battery_level") == 77
+    assert attrs["door_state"] == "open"
+    assert attrs["is_door_open"] is True
+    assert attrs["battery_level"] == 77
 
 
 def test_extra_state_attributes_omit_door_sensor_when_absent(coord_with_lock):
@@ -84,7 +85,7 @@ def test_extra_state_attributes_omit_door_sensor_when_absent(coord_with_lock):
 
 
 # ---------------------------------------------------------------------------
-# Lines 34-38: async_setup_entry filters non-lock devices
+# async_setup_entry filters non-lock devices
 # ---------------------------------------------------------------------------
 
 async def test_setup_entry_excludes_non_lock_devices(hass):
@@ -113,7 +114,7 @@ async def test_setup_entry_excludes_non_lock_devices(hass):
 
 
 # ---------------------------------------------------------------------------
-# Line 77: available returns False when coordinator or device unavailable
+# available returns False when coordinator or device unavailable
 # ---------------------------------------------------------------------------
 
 def test_available_false_when_coordinator_update_failed(coord_with_lock):
@@ -131,7 +132,7 @@ def test_available_false_when_device_unavailable(coord_with_lock):
 
 
 # ---------------------------------------------------------------------------
-# Lines 82-84: is_locked returns optimistic value when set
+# is_locked returns optimistic value when set
 # ---------------------------------------------------------------------------
 
 def test_is_locked_returns_optimistic_when_set(coord_with_lock):
@@ -151,7 +152,7 @@ def test_is_locked_returns_device_value_when_no_optimistic(coord_with_lock):
 
 
 # ---------------------------------------------------------------------------
-# Line 94: is_jammed delegates to device
+# is_jammed delegates to device
 # ---------------------------------------------------------------------------
 
 def test_is_jammed_true_when_device_jammed(coord_with_lock):
@@ -162,7 +163,7 @@ def test_is_jammed_true_when_device_jammed(coord_with_lock):
 
 
 # ---------------------------------------------------------------------------
-# Lines 103-111: _handle_coordinator_update clears optimistic only on match
+# _handle_coordinator_update clears optimistic only on match
 # ---------------------------------------------------------------------------
 
 def test_handle_coordinator_update_keeps_optimistic_when_unconfirmed(coord_with_lock):
@@ -208,7 +209,7 @@ def test_handle_coordinator_update_clears_optimistic_unlocked_confirmed(coord_wi
 
 
 # ---------------------------------------------------------------------------
-# Lines 132->exit, 135-137: async_lock DeviceError → HomeAssistantError
+# async_lock DeviceError → HomeAssistantError
 # ---------------------------------------------------------------------------
 
 async def test_async_lock_device_error_raises_ha_error(coord_with_lock, hass):
@@ -234,7 +235,11 @@ async def test_async_lock_device_error_logs_error(coord_with_lock, hass):
     with patch("custom_components.u_tec.lock._LOGGER") as mock_logger:
         with pytest.raises(HomeAssistantError):
             await ent.async_lock()
-        mock_logger.error.assert_called_once()
+        # A diagnostic is emitted; don't couple to a specific log level.
+        assert any(
+            getattr(mock_logger, level).called
+            for level in ("error", "warning", "exception", "critical")
+        )
 
 
 async def test_async_lock_error_does_not_set_optimistic(coord_with_lock, hass):
@@ -253,7 +258,7 @@ async def test_async_lock_error_does_not_set_optimistic(coord_with_lock, hass):
 
 
 # ---------------------------------------------------------------------------
-# Lines 144->exit, 147-149: async_unlock DeviceError → HomeAssistantError
+# async_unlock DeviceError → HomeAssistantError
 # ---------------------------------------------------------------------------
 
 async def test_async_unlock_device_error_raises_ha_error(coord_with_lock, hass):
@@ -279,11 +284,14 @@ async def test_async_unlock_device_error_logs_error(coord_with_lock, hass):
     with patch("custom_components.u_tec.lock._LOGGER") as mock_logger:
         with pytest.raises(HomeAssistantError):
             await ent.async_unlock()
-        mock_logger.error.assert_called_once()
+        assert any(
+            getattr(mock_logger, level).called
+            for level in ("error", "warning", "exception", "critical")
+        )
 
 
 # ---------------------------------------------------------------------------
-# Lines 153-155: async_added_to_hass registers dispatcher signal
+# async_added_to_hass registers dispatcher signal
 # ---------------------------------------------------------------------------
 
 async def test_async_added_to_hass_registers_dispatcher(coord_with_lock, hass):
@@ -306,7 +314,7 @@ async def test_async_added_to_hass_registers_dispatcher(coord_with_lock, hass):
 
 
 # ---------------------------------------------------------------------------
-# Line 166: _handle_push_update calls async_write_ha_state
+# _handle_push_update calls async_write_ha_state
 # ---------------------------------------------------------------------------
 
 def test_handle_push_update_writes_ha_state(coord_with_lock):

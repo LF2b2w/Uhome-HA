@@ -1,5 +1,6 @@
 """Tests for async_setup_entry end-to-end integration."""
 
+from contextlib import contextmanager
 from types import MappingProxyType
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,12 +23,9 @@ def patched_uhomeapi():
         yield instance
 
 
-async def test_setup_entry_creates_coordinator_and_stores_in_hass_data(
-    hass, patched_uhomeapi,
-):
-    entry = make_config_entry(options={CONF_PUSH_ENABLED: False})
-    entry.add_to_hass(hass)
-
+@contextmanager
+def _patched_setup_env(hass):
+    """Stub the HA internals that async_setup_entry needs in isolation."""
     with patch(
         "custom_components.u_tec.config_entry_oauth2_flow.async_get_config_entry_implementation"
     ), patch(
@@ -47,6 +45,16 @@ async def test_setup_entry_creates_coordinator_and_stores_in_hass_data(
         new=AsyncMock(return_value=None),
     ):
         mock_session.return_value = MagicMock()
+        yield
+
+
+async def test_setup_entry_creates_coordinator_and_stores_in_hass_data(
+    hass, patched_uhomeapi,
+):
+    entry = make_config_entry(options={CONF_PUSH_ENABLED: False})
+    entry.add_to_hass(hass)
+
+    with _patched_setup_env(hass):
         result = await async_setup_entry(hass, entry)
 
     assert result is True
@@ -64,34 +72,13 @@ async def test_setup_entry_skips_webhook_when_push_disabled(
     entry = make_config_entry(options={CONF_PUSH_ENABLED: False})
     entry.add_to_hass(hass)
 
-    with patch(
-        "custom_components.u_tec.config_entry_oauth2_flow.async_get_config_entry_implementation"
-    ), patch(
-        "custom_components.u_tec.config_entry_oauth2_flow.OAuth2Session"
-    ) as mock_session, patch(
-        "custom_components.u_tec.aiohttp_client.async_get_clientsession",
-        return_value=MagicMock(),
-    ), patch(
+    with _patched_setup_env(hass), patch(
         "custom_components.u_tec.api.AsyncPushUpdateHandler.async_register_webhook",
         new=AsyncMock(),
-    ) as mock_register, patch(
-        "custom_components.u_tec.coordinator.UhomeDataUpdateCoordinator.async_config_entry_first_refresh",
-        new=AsyncMock(return_value=None),
-    ), patch(
-        "custom_components.u_tec.coordinator.UhomeDataUpdateCoordinator.async_start_periodic_discovery",
-        new=AsyncMock(return_value=None),
-    ), patch.object(
-        hass.config_entries,
-        "async_forward_entry_setups",
-        new=AsyncMock(return_value=None),
-    ):
-        mock_session.return_value = MagicMock()
+    ) as mock_register:
         await async_setup_entry(hass, entry)
 
     mock_register.assert_not_awaited()
-
-
-# --- Push-enabled webhook registration ---
 
 
 async def test_setup_entry_registers_webhook_when_push_enabled(
@@ -100,34 +87,13 @@ async def test_setup_entry_registers_webhook_when_push_enabled(
     entry = make_config_entry(options={CONF_PUSH_ENABLED: True})
     entry.add_to_hass(hass)
 
-    with patch(
-        "custom_components.u_tec.config_entry_oauth2_flow.async_get_config_entry_implementation"
-    ), patch(
-        "custom_components.u_tec.config_entry_oauth2_flow.OAuth2Session"
-    ) as mock_session, patch(
-        "custom_components.u_tec.aiohttp_client.async_get_clientsession",
-        return_value=MagicMock(),
-    ), patch(
+    with _patched_setup_env(hass), patch(
         "custom_components.u_tec.api.AsyncPushUpdateHandler.async_register_webhook",
         new=AsyncMock(return_value=True),
-    ) as mock_register, patch(
-        "custom_components.u_tec.coordinator.UhomeDataUpdateCoordinator.async_config_entry_first_refresh",
-        new=AsyncMock(return_value=None),
-    ), patch(
-        "custom_components.u_tec.coordinator.UhomeDataUpdateCoordinator.async_start_periodic_discovery",
-        new=AsyncMock(return_value=None),
-    ), patch.object(
-        hass.config_entries,
-        "async_forward_entry_setups",
-        new=AsyncMock(return_value=None),
-    ):
-        mock_session.return_value = MagicMock()
+    ) as mock_register:
         await async_setup_entry(hass, entry)
 
     mock_register.assert_awaited_once()
-
-
-# --- async_update_options push toggle ---
 
 
 async def test_async_update_options_toggles_webhook_on(hass, patched_uhomeapi):
@@ -137,38 +103,22 @@ async def test_async_update_options_toggles_webhook_on(hass, patched_uhomeapi):
     async def _reload_side_effect(_entry_id):
         await async_setup_entry(hass, entry)
 
-    with patch(
-        "custom_components.u_tec.config_entry_oauth2_flow.async_get_config_entry_implementation"
-    ), patch(
-        "custom_components.u_tec.config_entry_oauth2_flow.OAuth2Session"
-    ) as mock_session, patch(
-        "custom_components.u_tec.aiohttp_client.async_get_clientsession",
-        return_value=MagicMock(),
-    ), patch(
+    with _patched_setup_env(hass), patch(
         "custom_components.u_tec.api.AsyncPushUpdateHandler.async_register_webhook",
         new=AsyncMock(return_value=True),
-    ) as mock_register, patch(
-        "custom_components.u_tec.coordinator.UhomeDataUpdateCoordinator.async_config_entry_first_refresh",
-        new=AsyncMock(return_value=None),
-    ), patch(
-        "custom_components.u_tec.coordinator.UhomeDataUpdateCoordinator.async_start_periodic_discovery",
-        new=AsyncMock(return_value=None),
-    ), patch.object(
-        hass.config_entries,
-        "async_forward_entry_setups",
-        new=AsyncMock(return_value=None),
-    ), patch.object(
+    ) as mock_register, patch.object(
         hass.config_entries,
         "async_reload",
         new=AsyncMock(side_effect=_reload_side_effect),
     ):
-        mock_session.return_value = MagicMock()
         await async_setup_entry(hass, entry)
 
         # Flip push on by directly updating entry options (avoids scheduling the
-        # update-listener task, so async_update_options runs only once, explicitly)
+        # update-listener task, so async_update_options runs only once, explicitly).
         object.__setattr__(entry, "options", MappingProxyType({CONF_PUSH_ENABLED: True}))
         await async_update_options(hass, entry)
         await hass.async_block_till_done()
 
-    mock_register.assert_awaited()  # called at least once via reload path
+    # Exactly two registrations: initial setup (push=False so not called) + reload (push=True).
+    # The initial setup is push=False, so only the reload should have registered.
+    assert mock_register.await_count == 1
