@@ -132,3 +132,56 @@ def test_brightness_pending_persists_when_device_differs(coord_with_light):
 
     assert ent._optimistic_brightness == 200
     assert ent._pending_brightness_utec == 80
+
+
+# --- assumed_state + error handling ---
+
+
+def test_assumed_state_true_when_optimistic_and_pending(coord_with_light):
+    coord, light = coord_with_light
+    ent = UhomeLightEntity(coord, "light-1")
+    ent._optimistic_is_on = True
+    assert ent.assumed_state is True
+
+
+def test_assumed_state_false_when_optimistic_disabled(hass):
+    entry = make_config_entry(options={CONF_OPTIMISTIC_LIGHTS: False})
+    entry.add_to_hass(hass)
+    light = make_fake_light("light-1")
+    coord = MagicMock()
+    coord.devices = {"light-1": light}
+    coord.config_entry = entry
+    coord.last_update_success = True
+    coord.data = {}
+
+    ent = UhomeLightEntity(coord, "light-1")
+    ent._optimistic_is_on = True  # would be set, but optimistic disabled
+    assert ent.assumed_state is False
+
+
+async def test_turn_on_wraps_device_error(coord_with_light, hass):
+    from homeassistant.exceptions import HomeAssistantError
+    from utec_py.exceptions import DeviceError
+
+    coord, light = coord_with_light
+    light.turn_on.side_effect = DeviceError("nope")
+    ent = UhomeLightEntity(coord, "light-1")
+    ent.hass = hass
+    ent.entity_id = "light.fake_light"
+
+    with pytest.raises(HomeAssistantError):
+        await ent.async_turn_on()
+
+
+async def test_turn_off_wraps_device_error(coord_with_light, hass):
+    from homeassistant.exceptions import HomeAssistantError
+    from utec_py.exceptions import DeviceError
+
+    coord, light = coord_with_light
+    light.turn_off.side_effect = DeviceError("nope")
+    ent = UhomeLightEntity(coord, "light-1")
+    ent.hass = hass
+    ent.entity_id = "light.fake_light"
+
+    with pytest.raises(HomeAssistantError):
+        await ent.async_turn_off()
