@@ -92,3 +92,53 @@ async def test_register_fails_when_api_set_push_status_errors(hass, mock_uhome_a
         result = await h.async_register_webhook(auth_data=MagicMock())
 
     assert result is False
+
+
+# --- Secret rotation + unregister ---
+
+
+async def test_register_generates_new_secret_each_call(hass, mock_uhome_api):
+    h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
+
+    with patch(
+        "custom_components.u_tec.api.network.get_url",
+        return_value="https://ha.example.com",
+    ), patch(
+        "custom_components.u_tec.api.webhook.async_generate_url",
+        return_value="https://ha.example.com/api/webhook/x",
+    ), patch(
+        "custom_components.u_tec.api.webhook.async_register",
+        return_value=lambda: None,
+    ), patch(
+        "custom_components.u_tec.api.async_track_time_interval",
+        return_value=MagicMock(),
+    ):
+        await h.async_register_webhook(auth_data=MagicMock())
+        first = h._push_secret
+        await h.async_register_webhook(auth_data=MagicMock())
+        second = h._push_secret
+
+    assert first != second
+
+
+async def test_unregister_cancels_reregister_and_unregisters_hook(hass, mock_uhome_api):
+    h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
+    h._unregister_webhook = MagicMock()
+    cancel_mock = MagicMock()
+    h._cancel_reregister = cancel_mock
+
+    with patch(
+        "custom_components.u_tec.api.webhook.async_unregister",
+    ) as mock_unreg:
+        await h.unregister_webhook()
+
+    cancel_mock.assert_called_once()
+    mock_unreg.assert_called_once()
+    assert h._cancel_reregister is None
+    assert h._unregister_webhook is None
+
+
+async def test_unregister_noop_when_nothing_registered(hass, mock_uhome_api):
+    h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
+    # Neither _unregister_webhook nor _cancel_reregister is set — should not raise
+    await h.unregister_webhook()
