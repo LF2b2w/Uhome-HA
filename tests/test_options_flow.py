@@ -97,3 +97,48 @@ async def test_optimistic_all_for_every_type(hass):
     assert result["data"][CONF_OPTIMISTIC_LIGHTS] is True
     assert result["data"][CONF_OPTIMISTIC_SWITCHES] is True
     assert result["data"][CONF_OPTIMISTIC_LOCKS] is True
+
+
+# --- Optimistic picker: custom-mode ---
+
+
+async def test_optimistic_custom_for_lights(hass):
+    """Mode='custom' routes to device-selection step; selected devices end up in options list."""
+    entry = make_config_entry()
+    entry.add_to_hass(hass)
+
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+        "coordinator": MagicMock(devices={
+            "light-1": make_fake_light("light-1"),
+            "light-2": make_fake_light("light-2"),
+        }),
+    }
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    flow_id = result["flow_id"]
+
+    # Enter optimistic_updates step
+    result = await hass.config_entries.options.async_configure(
+        flow_id, user_input={"next_step_id": "optimistic_updates"},
+    )
+    assert result["step_id"] == "optimistic_updates"
+
+    # Submit: lights=custom, switches=all, locks=all — should route to pick_lights
+    result = await hass.config_entries.options.async_configure(
+        flow_id, user_input={
+            "lights_mode": "custom",
+            "switches_mode": "all",
+            "locks_mode": "all",
+        },
+    )
+    assert result["type"] == "form"
+    assert result["step_id"] == "pick_lights"
+
+    # Pick light-1 — form field key is the CONF_OPTIMISTIC_LIGHTS constant
+    result = await hass.config_entries.options.async_configure(
+        flow_id, user_input={CONF_OPTIMISTIC_LIGHTS: ["light-1"]},
+    )
+    assert result["type"] == "create_entry"
+    assert result["data"][CONF_OPTIMISTIC_LIGHTS] == ["light-1"]
+    assert result["data"][CONF_OPTIMISTIC_SWITCHES] is True
+    assert result["data"][CONF_OPTIMISTIC_LOCKS] is True
