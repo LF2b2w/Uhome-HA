@@ -10,6 +10,7 @@ from custom_components.u_tec.const import (
     SIGNAL_NEW_DEVICE,
 )
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -32,6 +33,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         self,
         hass: HomeAssistant,
         api: UHomeApi,
+        config_entry: ConfigEntry,
         scan_interval: int = DEFAULT_SCAN_INTERVAL,
         discovery_interval: int = DEFAULT_DISCOVERY_INTERVAL,
     ) -> None:
@@ -43,6 +45,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(seconds=scan_interval),
         )
         self.api = api
+        self.config_entry = config_entry
         self.devices: dict[str, BaseDevice] = {}
         self.added_sensor_entities = set()
         self.push_devices = []

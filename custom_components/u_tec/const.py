@@ -1,5 +1,13 @@
 """Constants for the Uhome integration."""
 
+from .optimistic import (
+    CONF_OPTIMISTIC_LIGHTS,
+    CONF_OPTIMISTIC_SWITCHES,
+    CONF_OPTIMISTIC_LOCKS,
+    DEFAULT_OPTIMISTIC,
+    is_optimistic_enabled,
+)
+
 DOMAIN = "u_tec"
 
 CONF_SCAN_INTERVAL = "scan_interval"

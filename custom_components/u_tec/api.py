@@ -186,19 +186,25 @@ class AsyncPushUpdateHandler:
 
             # Validate the push secret via the Authorization header.
             # U-Tec sends it as "Bearer <access_token>" in the HTTP header.
-            if self._push_secret is not None:
-                auth_header = request.headers.get("Authorization", "")
-                incoming_token = auth_header.removeprefix("Bearer ").strip()
-                if not incoming_token:
-                    _LOGGER.warning(
-                        "Webhook received with no Authorization header -- rejecting"
-                    )
-                    return web.Response(status=401)
-                if not secrets.compare_digest(incoming_token, self._push_secret):
-                    _LOGGER.error(
-                        "Webhook received with invalid Bearer token -- rejecting"
-                    )
-                    return web.Response(status=403)
+            # Fail closed if the secret hasn't been generated yet — a request
+            # arriving before registration completes must not be accepted.
+            if self._push_secret is None:
+                _LOGGER.warning(
+                    "Webhook received before push secret was initialised -- rejecting"
+                )
+                return web.Response(status=401)
+            auth_header = request.headers.get("Authorization", "")
+            incoming_token = auth_header.removeprefix("Bearer ").strip()
+            if not incoming_token:
+                _LOGGER.warning(
+                    "Webhook received with no Authorization header -- rejecting"
+                )
+                return web.Response(status=401)
+            if not secrets.compare_digest(incoming_token, self._push_secret):
+                _LOGGER.error(
+                    "Webhook received with invalid Bearer token -- rejecting"
+                )
+                return web.Response(status=403)
 
             _LOGGER.debug("Received webhook data: %s", data)
 
