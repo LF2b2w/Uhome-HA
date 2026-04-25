@@ -89,7 +89,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     discovery_interval = yaml_config.get(CONF_DISCOVERY_INTERVAL, DEFAULT_DISCOVERY_INTERVAL)
 
     coordinator = UhomeDataUpdateCoordinator(
-        hass, Uhomeapi, scan_interval=scan_interval, discovery_interval=discovery_interval
+        hass,
+        Uhomeapi,
+        config_entry=entry,
+        scan_interval=scan_interval,
+        discovery_interval=discovery_interval,
     )
 
     # Initial discovery populates self.devices before the first state poll.
