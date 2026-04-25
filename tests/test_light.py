@@ -77,3 +77,58 @@ async def test_turn_on_with_brightness_sets_pending(coord_with_light, hass):
     assert call_kwargs["brightness"] == 100  # U-Tec scale 1-100
     assert ent._optimistic_brightness == 255
     assert ent._pending_brightness_utec == 100
+
+
+# --- _handle_coordinator_update state-clear ---
+
+
+def test_coordinator_update_clears_optimistic_when_device_confirms(coord_with_light):
+    coord, light = coord_with_light
+    ent = UhomeLightEntity(coord, "light-1")
+    ent._optimistic_is_on = True
+    ent.async_write_ha_state = MagicMock()
+    light.is_on = True  # device now reports the same
+
+    ent._handle_coordinator_update()
+
+    assert ent._optimistic_is_on is None
+
+
+def test_coordinator_update_keeps_optimistic_when_device_disagrees(coord_with_light):
+    coord, light = coord_with_light
+    ent = UhomeLightEntity(coord, "light-1")
+    ent._optimistic_is_on = True
+    ent.async_write_ha_state = MagicMock()
+    light.is_on = False  # device still reports old state
+
+    ent._handle_coordinator_update()
+
+    assert ent._optimistic_is_on is True
+
+
+def test_brightness_pending_clears_only_on_exact_match(coord_with_light):
+    coord, light = coord_with_light
+    ent = UhomeLightEntity(coord, "light-1")
+    ent._optimistic_brightness = 200
+    ent._pending_brightness_utec = 80
+    ent.async_write_ha_state = MagicMock()
+    light.brightness = 80  # device caught up
+
+    ent._handle_coordinator_update()
+
+    assert ent._optimistic_brightness is None
+    assert ent._pending_brightness_utec is None
+
+
+def test_brightness_pending_persists_when_device_differs(coord_with_light):
+    coord, light = coord_with_light
+    ent = UhomeLightEntity(coord, "light-1")
+    ent._optimistic_brightness = 200
+    ent._pending_brightness_utec = 80
+    ent.async_write_ha_state = MagicMock()
+    light.brightness = 50  # device hasn't caught up
+
+    ent._handle_coordinator_update()
+
+    assert ent._optimistic_brightness == 200
+    assert ent._pending_brightness_utec == 80
