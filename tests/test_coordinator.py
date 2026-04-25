@@ -230,3 +230,56 @@ async def test_discover_skips_unknown_handle_type(coordinator, mock_uhome_api):
     }
     await coordinator.async_discover_devices()
     assert "M1" not in coordinator.devices
+
+
+# --- async_discover_devices: edge cases ---
+
+
+async def test_discover_skips_existing_device(coordinator, mock_uhome_api):
+    existing = make_fake_switch("S1")
+    coordinator.devices["S1"] = existing
+    mock_uhome_api.discover_devices.return_value = {
+        "payload": {"devices": [_discovery("utec-switch", "S1")]}
+    }
+    await coordinator.async_discover_devices()
+    assert coordinator.devices["S1"] is existing  # unchanged
+
+
+async def test_discover_handles_api_error_gracefully(coordinator, mock_uhome_api):
+    mock_uhome_api.discover_devices.side_effect = ApiError(500, "down")
+    await coordinator.async_discover_devices()  # should not raise
+    assert coordinator.devices == {}
+
+
+async def test_discover_bulk_fetches_initial_state_for_new_devices(
+    coordinator, mock_uhome_api,
+):
+    mock_uhome_api.discover_devices.return_value = {
+        "payload": {"devices": [
+            _discovery("utec-switch", "S1"),
+            _discovery("utec-switch", "S2"),
+        ]}
+    }
+    state_payload = {"payload": {"devices": [
+        {"id": "S1", "states": []},
+        {"id": "S2", "states": []},
+    ]}}
+    mock_uhome_api.get_device_state.return_value = state_payload
+
+    await coordinator.async_discover_devices()
+
+    mock_uhome_api.get_device_state.assert_awaited_once_with(["S1", "S2"], None)
+
+
+async def test_discover_invalid_discovery_data_is_noop(coordinator, mock_uhome_api):
+    mock_uhome_api.discover_devices.return_value = {}  # no "payload" key
+    await coordinator.async_discover_devices()
+    assert coordinator.devices == {}
+
+
+async def test_discover_device_missing_id_is_skipped(coordinator, mock_uhome_api):
+    mock_uhome_api.discover_devices.return_value = {
+        "payload": {"devices": [{"handleType": "utec-switch"}]}  # no id
+    }
+    await coordinator.async_discover_devices()
+    assert coordinator.devices == {}
