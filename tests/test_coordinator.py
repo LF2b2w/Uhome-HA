@@ -170,3 +170,63 @@ async def test_async_update_data_api_error_raises_update_failed(
 
     with pytest.raises(UpdateFailed, match="Error communicating"):
         await coordinator._async_update_data()
+
+
+# --- async_discover_devices: type routing ---
+
+from utec_py.devices.light import Light as UhomeLight
+from utec_py.devices.lock import Lock as UhomeLock
+from utec_py.devices.switch import Switch as UhomeSwitch
+
+
+def _discovery(handle_type: str, device_id: str = "d1") -> dict:
+    return {
+        "id": device_id,
+        "name": "Test",
+        "handleType": handle_type,
+        "category": "unknown",
+        "deviceInfo": {"manufacturer": "U-Tec", "model": "M", "hwVersion": "1.0"},
+    }
+
+
+async def test_discover_creates_lock(coordinator, mock_uhome_api):
+    mock_uhome_api.discover_devices.return_value = {
+        "payload": {"devices": [_discovery("utec-lock", "L1")]}
+    }
+    await coordinator.async_discover_devices()
+    assert "L1" in coordinator.devices
+    assert isinstance(coordinator.devices["L1"], UhomeLock)
+
+
+async def test_discover_creates_light_for_dimmer(coordinator, mock_uhome_api):
+    """Critical: 'dimmer' check must come BEFORE 'switch' -- regression would
+    misclassify utec-dimmer as Switch."""
+    mock_uhome_api.discover_devices.return_value = {
+        "payload": {"devices": [_discovery("utec-dimmer", "D1")]}
+    }
+    await coordinator.async_discover_devices()
+    assert isinstance(coordinator.devices["D1"], UhomeLight)
+
+
+async def test_discover_creates_light_for_bulb(coordinator, mock_uhome_api):
+    mock_uhome_api.discover_devices.return_value = {
+        "payload": {"devices": [_discovery("utec-bulb-color", "B1")]}
+    }
+    await coordinator.async_discover_devices()
+    assert isinstance(coordinator.devices["B1"], UhomeLight)
+
+
+async def test_discover_creates_switch_for_plain_switch(coordinator, mock_uhome_api):
+    mock_uhome_api.discover_devices.return_value = {
+        "payload": {"devices": [_discovery("utec-switch", "S1")]}
+    }
+    await coordinator.async_discover_devices()
+    assert isinstance(coordinator.devices["S1"], UhomeSwitch)
+
+
+async def test_discover_skips_unknown_handle_type(coordinator, mock_uhome_api):
+    mock_uhome_api.discover_devices.return_value = {
+        "payload": {"devices": [_discovery("mystery-device", "M1")]}
+    }
+    await coordinator.async_discover_devices()
+    assert "M1" not in coordinator.devices
