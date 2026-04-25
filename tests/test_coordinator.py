@@ -117,3 +117,56 @@ async def test_update_push_data_unrecognised_top_level_type_is_noop(coordinator)
     await coordinator.update_push_data(42)
 
     sw.update_state_data.assert_not_awaited()
+
+
+# --- _async_update_data ---
+
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.update_coordinator import UpdateFailed
+from utec_py.exceptions import ApiError, AuthenticationError
+
+
+async def test_async_update_data_empty_when_no_devices(coordinator):
+    result = await coordinator._async_update_data()
+    assert result == {}
+    coordinator.api.get_device_state.assert_not_called()
+
+
+async def test_async_update_data_bulk_fetches_all_devices(coordinator, mock_uhome_api):
+    sw1 = make_fake_switch("sw-1")
+    sw2 = make_fake_switch("sw-2")
+    sw1.get_state_data = lambda: {"st.switch": {"switch": "on"}}
+    sw2.get_state_data = lambda: {"st.switch": {"switch": "off"}}
+    coordinator.devices["sw-1"] = sw1
+    coordinator.devices["sw-2"] = sw2
+    mock_uhome_api.get_device_state.return_value = {
+        "payload": {"devices": [
+            {"id": "sw-1", "states": [{"capability": "st.switch", "name": "switch", "value": "on"}]},
+            {"id": "sw-2", "states": [{"capability": "st.switch", "name": "switch", "value": "off"}]},
+        ]}
+    }
+
+    result = await coordinator._async_update_data()
+
+    assert set(result.keys()) == {"sw-1", "sw-2"}
+    mock_uhome_api.get_device_state.assert_awaited_once_with(["sw-1", "sw-2"], None)
+
+
+async def test_async_update_data_auth_error_raises_config_entry_auth_failed(
+    coordinator, mock_uhome_api,
+):
+    coordinator.devices["sw-1"] = make_fake_switch("sw-1")
+    mock_uhome_api.get_device_state.side_effect = AuthenticationError("bad token")
+
+    with pytest.raises(ConfigEntryAuthFailed, match="Credentials expired"):
+        await coordinator._async_update_data()
+
+
+async def test_async_update_data_api_error_raises_update_failed(
+    coordinator, mock_uhome_api,
+):
+    coordinator.devices["sw-1"] = make_fake_switch("sw-1")
+    mock_uhome_api.get_device_state.side_effect = ApiError(500, "oops")
+
+    with pytest.raises(UpdateFailed, match="Error communicating"):
+        await coordinator._async_update_data()
