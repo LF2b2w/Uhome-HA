@@ -3,7 +3,6 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from aiohttp import web
 
 from custom_components.u_tec.api import AsyncPushUpdateHandler
 from custom_components.u_tec.const import DOMAIN
@@ -91,14 +90,18 @@ async def test_bearer_stripped_with_whitespace(webhook_handler, hass):
     assert resp.status == 200
 
 
-async def test_no_push_secret_set_bypasses_token_check(hass, mock_uhome_api):
-    """If _push_secret is None the handler doesn't validate the token."""
+async def test_rejects_when_push_secret_not_initialised(hass, mock_uhome_api):
+    """If _push_secret is None the handler must fail closed (401), not accept."""
     h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="entry-1")
     h._push_secret = None
     coord = MagicMock()
     coord.update_push_data = AsyncMock()
     hass.data[DOMAIN] = {"entry-1": {"coordinator": coord}}
 
-    req = _make_request(body=b'{"devices": []}')  # no auth header
+    req = _make_request(
+        body=b'{"devices": []}',
+        headers={"Authorization": "Bearer anything"},
+    )
     resp = await h._handle_webhook(hass, "wh-id", req)
-    assert resp.status == 200
+    assert resp.status == 401
+    coord.update_push_data.assert_not_awaited()
