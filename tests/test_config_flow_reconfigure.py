@@ -47,3 +47,43 @@ async def test_replace_credentials_form_prefills_client_id_when_cred_exists(hass
     assert client_id_key.default() == "old-id"
     secret_key = next(k for k in schema if str(k) == "client_secret")
     assert secret_key.default() == ""
+
+
+async def test_user_step_routes_to_replace_when_creds_exist(hass):
+    """When creds are pre-registered, async_step_user routes to replace_credentials."""
+    from homeassistant.components.application_credentials import (
+        ClientCredential,
+        async_import_client_credential,
+    )
+    from homeassistant.setup import async_setup_component
+
+    from custom_components.u_tec.config_flow import UhomeOAuth2FlowHandler
+    from custom_components.u_tec.const import DOMAIN
+
+    await async_setup_component(hass, "application_credentials", {})
+    await async_import_client_credential(
+        hass, DOMAIN, ClientCredential("stale-id", "stale-secret"), "u_tec"
+    )
+
+    handler = UhomeOAuth2FlowHandler()
+    handler.hass = hass
+    result = await handler.async_step_user()
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "replace_credentials"
+
+
+async def test_user_step_shows_normal_form_when_no_creds(hass):
+    """When no creds exist, async_step_user renders the existing user form."""
+    from homeassistant.setup import async_setup_component
+
+    from custom_components.u_tec.config_flow import UhomeOAuth2FlowHandler
+
+    await async_setup_component(hass, "application_credentials", {})
+
+    handler = UhomeOAuth2FlowHandler()
+    handler.hass = hass
+    result = await handler.async_step_user()
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "user"

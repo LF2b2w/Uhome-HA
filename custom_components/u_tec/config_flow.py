@@ -98,6 +98,13 @@ class UhomeOAuth2FlowHandler(
         if self._async_current_entries():
             return self.async_abort(reason="single_instance_allowed")
 
+        # Issue #50 recovery: if credentials are already stored from a prior
+        # failed attempt, route the user to the inline replace form instead
+        # of the scope-only user form. This avoids the hidden Application
+        # Credentials menu detour for fixing typos.
+        if self._get_existing_credential() is not None:
+            return await self.async_step_replace_credentials()
+
         if user_input is not None:
             self.data = user_input
             return await self.async_step_pick_implementation()
