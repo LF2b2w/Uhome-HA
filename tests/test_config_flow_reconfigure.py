@@ -279,6 +279,52 @@ async def test_async_oauth_create_entry_updates_existing_on_reconfigure(hass):
     assert call_kwargs["options"] == existing_options
 
 
+async def test_replace_credentials_rotates_secret_when_client_id_matches(hass):
+    """Submitting same client_id with new secret actually updates the stored secret."""
+    from unittest.mock import AsyncMock, patch
+
+    from homeassistant.components.application_credentials import (
+        DATA_COMPONENT,
+        CONF_CLIENT_ID,
+        CONF_CLIENT_SECRET,
+        CONF_DOMAIN,
+        ClientCredential,
+        async_import_client_credential,
+    )
+    from homeassistant.setup import async_setup_component
+
+    from custom_components.u_tec.config_flow import UhomeOAuth2FlowHandler
+    from custom_components.u_tec.const import DOMAIN
+
+    await async_setup_component(hass, "application_credentials", {})
+    await async_import_client_credential(
+        hass, DOMAIN, ClientCredential("same-id", "old-secret"), "u_tec"
+    )
+
+    handler = UhomeOAuth2FlowHandler()
+    handler.hass = hass
+
+    sentinel = {"type": "external", "url": "https://example.com/auth"}
+    with patch.object(
+        handler, "async_step_pick_implementation",
+        new=AsyncMock(return_value=sentinel),
+    ):
+        result = await handler.async_step_replace_credentials(
+            {"client_id": "same-id", "client_secret": "new-secret"}
+        )
+
+    assert result is sentinel
+
+    items = list(hass.data[DATA_COMPONENT].async_items())
+    u_tec_items = [i for i in items if i[CONF_DOMAIN] == DOMAIN]
+    assert len(u_tec_items) == 1, "Expected exactly one cred after rotation"
+    assert u_tec_items[0][CONF_CLIENT_ID] == "same-id"
+    assert u_tec_items[0][CONF_CLIENT_SECRET] == "new-secret", (
+        "Secret should have been updated, but old secret persisted (issue: "
+        "async_import_item is no-op on duplicate suggested_id)"
+    )
+
+
 async def test_async_oauth_create_entry_updates_existing_on_reauth(hass):
     """For source=reauth, update the entry data and preserve its options."""
     from unittest.mock import MagicMock, patch
@@ -328,3 +374,49 @@ async def test_async_oauth_create_entry_updates_existing_on_reauth(hass):
     assert call_args[0] is entry
     assert call_kwargs["data"] == new_data
     assert call_kwargs["options"] == existing_options
+
+
+async def test_replace_credentials_rotates_secret_when_client_id_matches(hass):
+    """Submitting same client_id with new secret actually updates the stored secret."""
+    from unittest.mock import AsyncMock, patch
+
+    from homeassistant.components.application_credentials import (
+        DATA_COMPONENT,
+        CONF_CLIENT_ID,
+        CONF_CLIENT_SECRET,
+        CONF_DOMAIN,
+        ClientCredential,
+        async_import_client_credential,
+    )
+    from homeassistant.setup import async_setup_component
+
+    from custom_components.u_tec.config_flow import UhomeOAuth2FlowHandler
+    from custom_components.u_tec.const import DOMAIN
+
+    await async_setup_component(hass, "application_credentials", {})
+    await async_import_client_credential(
+        hass, DOMAIN, ClientCredential("same-id", "old-secret"), "u_tec"
+    )
+
+    handler = UhomeOAuth2FlowHandler()
+    handler.hass = hass
+
+    sentinel = {"type": "external", "url": "https://example.com/auth"}
+    with patch.object(
+        handler, "async_step_pick_implementation",
+        new=AsyncMock(return_value=sentinel),
+    ):
+        result = await handler.async_step_replace_credentials(
+            {"client_id": "same-id", "client_secret": "new-secret"}
+        )
+
+    assert result is sentinel
+
+    items = list(hass.data[DATA_COMPONENT].async_items())
+    u_tec_items = [i for i in items if i[CONF_DOMAIN] == DOMAIN]
+    assert len(u_tec_items) == 1, "Expected exactly one cred after rotation"
+    assert u_tec_items[0][CONF_CLIENT_ID] == "same-id"
+    assert u_tec_items[0][CONF_CLIENT_SECRET] == "new-secret", (
+        "Secret should have been updated, but old secret persisted (issue: "
+        "async_import_item is no-op on duplicate suggested_id)"
+    )

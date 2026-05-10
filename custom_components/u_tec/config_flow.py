@@ -138,10 +138,12 @@ class UhomeOAuth2FlowHandler(
         """Render and process the inline replace-credentials form.
 
         Used both for issue #50 recovery (initial setup with stale creds in
-        HA's app-creds store) and for reconfigure of working entries. Order
-        of operations: import the new credential FIRST, then delete the
-        old ones — so a partial failure leaves the (possibly-referencing)
-        config entry pointing at a still-valid credential.
+        HA's app-creds store) and for reconfigure of working entries.
+
+        For items whose client_id matches the new one, we delete BEFORE import
+        so the import is not a no-op (async_import_item returns early on duplicate
+        suggested_id). For items with a different client_id, import first then
+        delete — so a partial failure leaves the entry pointing at a valid cred.
         """
         if user_input is not None:
             client_id = (user_input.get("client_id") or "").strip()
@@ -153,15 +155,32 @@ class UhomeOAuth2FlowHandler(
                     errors={"base": "empty_credentials"},
                 )
 
-            # Snapshot existing items BEFORE import so we delete only pre-existing.
+            # Snapshot existing items grouped by whether their client_id matches.
             storage = self.hass.data.get(APP_CREDS_DATA)
-            existing_ids: list[str] = []
+            matching_ids: list[str] = []
+            other_ids: list[str] = []
             if storage is not None:
-                existing_ids = [
-                    item[APP_CREDS_ID]
-                    for item in storage.async_items()
-                    if item.get(APP_CREDS_DOMAIN) == DOMAIN
-                ]
+                for item in storage.async_items():
+                    if item.get(APP_CREDS_DOMAIN) != DOMAIN:
+                        continue
+                    if item.get(APP_CREDS_CLIENT_ID) == client_id:
+                        matching_ids.append(item[APP_CREDS_ID])
+                    else:
+                        other_ids.append(item[APP_CREDS_ID])
+
+            # For matching client_ids, delete BEFORE import so the import is not
+            # a no-op. Acceptable safety tradeoff: between delete and import there
+            # is no cred for this domain, but no concurrent code runs (single
+            # coroutine, no foreign awaits in the gap).
+            for item_id in matching_ids:
+                try:
+                    await storage.async_delete_item(item_id)
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "Failed to delete pre-existing u_tec credential %s before re-import: %s",
+                        item_id,
+                        err,
+                    )
 
             try:
                 await async_import_client_credential(
@@ -170,28 +189,17 @@ class UhomeOAuth2FlowHandler(
                     ClientCredential(client_id, client_secret),
                     "u_tec",
                 )
-            except (ValueError, KeyError) as err:
+            except Exception as err:  # noqa: BLE001
                 _LOGGER.error("Failed to import new u_tec credential: %s", err)
                 return self._show_replace_form(
                     client_id=client_id,
                     errors={"base": "credential_import_failed"},
                 )
 
-            # Delete the previously-existing creds. A pre-existing cred whose
-            # client_id matches the new one would have been a no-op import
-            # (async_import_item early-returns on duplicate suggested_id),
-            # so don't delete a record whose client_id matches what we just
-            # imported — that would delete the cred we just registered.
+            # For non-matching client_ids, delete AFTER import (safe order —
+            # entry still references a valid cred while old ones are cleaned up).
             if storage is not None:
-                for item_id in existing_ids:
-                    item = next(
-                        (i for i in storage.async_items() if i[APP_CREDS_ID] == item_id),
-                        None,
-                    )
-                    if item is None:
-                        continue
-                    if item.get(APP_CREDS_CLIENT_ID) == client_id:
-                        continue
+                for item_id in other_ids:
                     try:
                         await storage.async_delete_item(item_id)
                     except Exception as err:  # noqa: BLE001
@@ -239,6 +247,12 @@ class UhomeOAuth2FlowHandler(
                 options=dict(entry.options),
             )
 
+        # NOTE: this branch is currently dead code — the existing
+        # async_step_reauth_confirm → async_step_user path aborts with
+        # single_instance_allowed before OAuth runs. Kept here so a future
+        # fix to the reauth path (routing reauth_confirm through pick_implementation
+        # or replace_credentials directly) gets correct entry-update behavior
+        # automatically.
         if self.source == SOURCE_REAUTH:
             entry = self._get_reauth_entry()
             return self.async_update_reload_and_abort(
