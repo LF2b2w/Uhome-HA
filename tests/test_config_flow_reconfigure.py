@@ -199,3 +199,132 @@ async def test_reconfigure_step_routes_to_replace_credentials(hass):
 
     mock_replace.assert_awaited_once()
     assert result is sentinel
+
+
+async def test_async_oauth_create_entry_creates_new_on_user_source(hass):
+    """For source=user (initial setup), behavior is unchanged: create_entry result."""
+    from unittest.mock import MagicMock
+
+    from custom_components.u_tec.config_flow import UhomeOAuth2FlowHandler
+    from custom_components.u_tec.const import (
+        CONF_HA_DEVICES, CONF_PUSH_DEVICES, CONF_PUSH_ENABLED,
+    )
+
+    handler = UhomeOAuth2FlowHandler()
+    handler.hass = hass
+    handler.context = {"source": "user"}
+    flow_impl = MagicMock()
+    flow_impl.name = "u_tec"
+    handler.flow_impl = flow_impl
+
+    data = {"token": {"access_token": "tok"}, "auth_implementation": "u_tec"}
+    result = await handler.async_oauth_create_entry(data)
+
+    assert result["type"] == "create_entry"
+    assert result["data"] == data
+    options = result["options"]
+    assert options[CONF_PUSH_ENABLED] is True
+    assert options[CONF_PUSH_DEVICES] == []
+    assert options[CONF_HA_DEVICES] == []
+
+
+async def test_async_oauth_create_entry_updates_existing_on_reconfigure(hass):
+    """For source=reconfigure, update the entry and preserve its options."""
+    from unittest.mock import MagicMock, patch
+
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.u_tec.config_flow import UhomeOAuth2FlowHandler
+    from custom_components.u_tec.const import (
+        CONF_HA_DEVICES, CONF_PUSH_DEVICES, CONF_PUSH_ENABLED, DOMAIN,
+    )
+
+    existing_options = {
+        CONF_PUSH_ENABLED: False,
+        CONF_PUSH_DEVICES: ["dev-a", "dev-b"],
+        CONF_HA_DEVICES: ["dev-a"],
+    }
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="u_tec",
+        data={"auth_implementation": "u_tec", "token": {"access_token": "old"}},
+        options=existing_options,
+        version=2,
+    )
+    entry.add_to_hass(hass)
+
+    handler = UhomeOAuth2FlowHandler()
+    handler.hass = hass
+    handler.context = {"source": "reconfigure", "entry_id": entry.entry_id}
+    flow_impl = MagicMock()
+    flow_impl.name = "u_tec"
+    handler.flow_impl = flow_impl
+
+    sentinel = {"type": "abort", "reason": "reconfigure_successful"}
+    new_data = {"token": {"access_token": "new"}, "auth_implementation": "u_tec"}
+
+    with patch.object(
+        handler,
+        "async_update_reload_and_abort",
+        return_value=sentinel,
+    ) as mock_update:
+        result = await handler.async_oauth_create_entry(new_data)
+
+    assert result is sentinel
+    mock_update.assert_called_once()
+    call_args = mock_update.call_args.args
+    call_kwargs = mock_update.call_args.kwargs
+    assert call_args[0] is entry
+    assert call_kwargs["data"] == new_data
+    assert call_kwargs["options"] == existing_options
+
+
+async def test_async_oauth_create_entry_updates_existing_on_reauth(hass):
+    """For source=reauth, update the entry data and preserve its options."""
+    from unittest.mock import MagicMock, patch
+
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.u_tec.config_flow import UhomeOAuth2FlowHandler
+    from custom_components.u_tec.const import (
+        CONF_HA_DEVICES, CONF_PUSH_DEVICES, CONF_PUSH_ENABLED, DOMAIN,
+    )
+
+    existing_options = {
+        CONF_PUSH_ENABLED: True,
+        CONF_PUSH_DEVICES: [],
+        CONF_HA_DEVICES: ["dev-x"],
+    }
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="u_tec",
+        data={"auth_implementation": "u_tec", "token": {"access_token": "old"}},
+        options=existing_options,
+        version=2,
+    )
+    entry.add_to_hass(hass)
+
+    handler = UhomeOAuth2FlowHandler()
+    handler.hass = hass
+    handler.context = {"source": "reauth", "entry_id": entry.entry_id}
+    flow_impl = MagicMock()
+    flow_impl.name = "u_tec"
+    handler.flow_impl = flow_impl
+
+    sentinel = {"type": "abort", "reason": "reauth_successful"}
+    new_data = {"token": {"access_token": "new"}, "auth_implementation": "u_tec"}
+
+    with patch.object(
+        handler,
+        "async_update_reload_and_abort",
+        return_value=sentinel,
+    ) as mock_update:
+        result = await handler.async_oauth_create_entry(new_data)
+
+    assert result is sentinel
+    mock_update.assert_called_once()
+    call_args = mock_update.call_args.args
+    call_kwargs = mock_update.call_args.kwargs
+    assert call_args[0] is entry
+    assert call_kwargs["data"] == new_data
+    assert call_kwargs["options"] == existing_options

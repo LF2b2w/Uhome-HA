@@ -14,7 +14,12 @@ from homeassistant.components.application_credentials import (
     DATA_COMPONENT as APP_CREDS_DATA,
     async_import_client_credential,
 )
-from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlowResult,
+    SOURCE_REAUTH,
+    SOURCE_RECONFIGURE,
+)
 from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_entry_oauth2_flow
@@ -224,11 +229,24 @@ class UhomeOAuth2FlowHandler(
 
     async def async_oauth_create_entry(
         self, data: dict
-    ) -> config_entries.ConfigFlowResult:
-        """Create an entry for the flow.
+    ) -> ConfigFlowResult:
+        """Create or update the config entry depending on the flow source."""
+        if self.source == SOURCE_RECONFIGURE:
+            entry = self._get_reconfigure_entry()
+            return self.async_update_reload_and_abort(
+                entry,
+                data=data,
+                options=dict(entry.options),
+            )
 
-        Ok to override if you want to fetch extra info or even add another step.
-        """
+        if self.source == SOURCE_REAUTH:
+            entry = self._get_reauth_entry()
+            return self.async_update_reload_and_abort(
+                entry,
+                data=data,
+                options=dict(entry.options),
+            )
+
         options = {
             CONF_PUSH_ENABLED: True,
             CONF_PUSH_DEVICES: [],  # Empty list means all devices
