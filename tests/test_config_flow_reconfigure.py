@@ -87,3 +87,94 @@ async def test_user_step_shows_normal_form_when_no_creds(hass):
 
     assert result["type"] == "form"
     assert result["step_id"] == "user"
+
+
+async def test_replace_credentials_imports_new_and_deletes_old(hass):
+    """Submitting the form imports the new cred and removes the old one(s)."""
+    from unittest.mock import AsyncMock, patch
+
+    from homeassistant.components.application_credentials import (
+        DATA_COMPONENT,
+        CONF_CLIENT_ID,
+        CONF_DOMAIN,
+        ClientCredential,
+        async_import_client_credential,
+    )
+    from homeassistant.setup import async_setup_component
+
+    from custom_components.u_tec.config_flow import UhomeOAuth2FlowHandler
+    from custom_components.u_tec.const import DOMAIN
+
+    await async_setup_component(hass, "application_credentials", {})
+    await async_import_client_credential(
+        hass, DOMAIN, ClientCredential("old-id", "old-secret"), "u_tec"
+    )
+
+    handler = UhomeOAuth2FlowHandler()
+    handler.hass = hass
+    handler.flow_id = "test-flow-id"
+
+    sentinel = {"type": "external", "url": "https://example.com/auth"}
+    with patch.object(
+        handler, "async_step_pick_implementation",
+        new=AsyncMock(return_value=sentinel),
+    ):
+        result = await handler.async_step_replace_credentials(
+            {"client_id": "new-id", "client_secret": "new-secret"}
+        )
+
+    assert result is sentinel
+
+    items = list(hass.data[DATA_COMPONENT].async_items())
+    u_tec_items = [i for i in items if i[CONF_DOMAIN] == DOMAIN]
+    assert len(u_tec_items) == 1
+    assert u_tec_items[0][CONF_CLIENT_ID] == "new-id"
+
+
+async def test_replace_credentials_validation_blocks_empty_inputs(hass):
+    """Empty client_id or client_secret re-renders the form with errors."""
+    from homeassistant.setup import async_setup_component
+
+    from custom_components.u_tec.config_flow import UhomeOAuth2FlowHandler
+
+    await async_setup_component(hass, "application_credentials", {})
+    handler = UhomeOAuth2FlowHandler()
+    handler.hass = hass
+
+    result = await handler.async_step_replace_credentials(
+        {"client_id": "  ", "client_secret": "secret"}
+    )
+    assert result["type"] == "form"
+    assert result["step_id"] == "replace_credentials"
+    assert result["errors"] == {"base": "empty_credentials"}
+
+    result2 = await handler.async_step_replace_credentials(
+        {"client_id": "id", "client_secret": ""}
+    )
+    assert result2["type"] == "form"
+    assert result2["errors"] == {"base": "empty_credentials"}
+
+
+async def test_replace_credentials_handles_import_failure(hass):
+    """If async_import_client_credential raises, form re-renders with error."""
+    from unittest.mock import patch
+
+    from homeassistant.setup import async_setup_component
+
+    from custom_components.u_tec.config_flow import UhomeOAuth2FlowHandler
+
+    await async_setup_component(hass, "application_credentials", {})
+    handler = UhomeOAuth2FlowHandler()
+    handler.hass = hass
+
+    with patch(
+        "custom_components.u_tec.config_flow.async_import_client_credential",
+        side_effect=ValueError("boom"),
+    ):
+        result = await handler.async_step_replace_credentials(
+            {"client_id": "new-id", "client_secret": "new-secret"}
+        )
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "replace_credentials"
+    assert result["errors"] == {"base": "credential_import_failed"}

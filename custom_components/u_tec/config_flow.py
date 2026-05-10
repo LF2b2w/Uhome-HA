@@ -7,10 +7,12 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.components.application_credentials import (
+    ClientCredential,
     CONF_CLIENT_ID as APP_CREDS_CLIENT_ID,
     CONF_DOMAIN as APP_CREDS_DOMAIN,
     CONF_ID as APP_CREDS_ID,
     DATA_COMPONENT as APP_CREDS_DATA,
+    async_import_client_credential,
 )
 from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
 from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
@@ -128,18 +130,96 @@ class UhomeOAuth2FlowHandler(
     async def async_step_replace_credentials(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Render the replace-credentials form (submit logic added in a later task)."""
-        existing = self._get_existing_credential()
-        default_client_id = existing.get(APP_CREDS_CLIENT_ID, "") if existing else ""
+        """Render and process the inline replace-credentials form.
+
+        Used both for issue #50 recovery (initial setup with stale creds in
+        HA's app-creds store) and for reconfigure of working entries. Order
+        of operations: import the new credential FIRST, then delete the
+        old ones — so a partial failure leaves the (possibly-referencing)
+        config entry pointing at a still-valid credential.
+        """
+        if user_input is not None:
+            client_id = (user_input.get("client_id") or "").strip()
+            client_secret = (user_input.get("client_secret") or "").strip()
+
+            if not client_id or not client_secret:
+                return self._show_replace_form(
+                    client_id=client_id,
+                    errors={"base": "empty_credentials"},
+                )
+
+            # Snapshot existing items BEFORE import so we delete only pre-existing.
+            storage = self.hass.data.get(APP_CREDS_DATA)
+            existing_ids: list[str] = []
+            if storage is not None:
+                existing_ids = [
+                    item[APP_CREDS_ID]
+                    for item in storage.async_items()
+                    if item.get(APP_CREDS_DOMAIN) == DOMAIN
+                ]
+
+            try:
+                await async_import_client_credential(
+                    self.hass,
+                    DOMAIN,
+                    ClientCredential(client_id, client_secret),
+                    "u_tec",
+                )
+            except (ValueError, KeyError) as err:
+                _LOGGER.error("Failed to import new u_tec credential: %s", err)
+                return self._show_replace_form(
+                    client_id=client_id,
+                    errors={"base": "credential_import_failed"},
+                )
+
+            # Delete the previously-existing creds. A pre-existing cred whose
+            # client_id matches the new one would have been a no-op import
+            # (async_import_item early-returns on duplicate suggested_id),
+            # so don't delete a record whose client_id matches what we just
+            # imported — that would delete the cred we just registered.
+            if storage is not None:
+                for item_id in existing_ids:
+                    item = next(
+                        (i for i in storage.async_items() if i[APP_CREDS_ID] == item_id),
+                        None,
+                    )
+                    if item is None:
+                        continue
+                    if item.get(APP_CREDS_CLIENT_ID) == client_id:
+                        continue
+                    try:
+                        await storage.async_delete_item(item_id)
+                    except Exception as err:  # noqa: BLE001
+                        _LOGGER.warning(
+                            "Failed to delete stale u_tec credential %s: %s",
+                            item_id,
+                            err,
+                        )
+
+            return await self.async_step_pick_implementation()
+
+        return self._show_replace_form(client_id=None)
+
+    def _show_replace_form(
+        self,
+        *,
+        client_id: str | None,
+        errors: dict[str, str] | None = None,
+    ) -> ConfigFlowResult:
+        """Render the replace-credentials form with optional prefill + errors."""
+        if client_id is None:
+            existing = self._get_existing_credential()
+            client_id = existing.get(APP_CREDS_CLIENT_ID, "") if existing else ""
 
         return self.async_show_form(
             step_id="replace_credentials",
             data_schema=vol.Schema(
                 {
-                    vol.Required("client_id", default=default_client_id): str,
+                    vol.Required("client_id", default=client_id): str,
                     vol.Required("client_secret", default=""): str,
                 }
             ),
+            errors=errors or {},
         )
 
     async def async_oauth_create_entry(
