@@ -255,6 +255,17 @@ class UhomeOAuth2FlowHandler(
             )
         return await self.async_step_user()
 
+    async def async_step_reconfigure(
+        self, entry_data: Mapping[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Entry point when the user clicks Reconfigure on the integration card.
+
+        Routes to the inline replace-credentials form. The current entry is
+        accessible via self._get_reconfigure_entry() from Task 5's
+        async_oauth_create_entry override; nothing to capture here.
+        """
+        return await self.async_step_replace_credentials()
+
     @staticmethod
     @callback
     def async_get_options_flow(

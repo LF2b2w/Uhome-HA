@@ -178,3 +178,24 @@ async def test_replace_credentials_handles_import_failure(hass):
     assert result["type"] == "form"
     assert result["step_id"] == "replace_credentials"
     assert result["errors"] == {"base": "credential_import_failed"}
+
+
+async def test_reconfigure_step_routes_to_replace_credentials(hass):
+    """async_step_reconfigure jumps to async_step_replace_credentials."""
+    from unittest.mock import AsyncMock, patch
+
+    from custom_components.u_tec.config_flow import UhomeOAuth2FlowHandler
+
+    handler = UhomeOAuth2FlowHandler()
+    handler.hass = hass
+
+    sentinel = {"type": "form", "step_id": "replace_credentials"}
+    with patch.object(
+        handler,
+        "async_step_replace_credentials",
+        new=AsyncMock(return_value=sentinel),
+    ) as mock_replace:
+        result = await handler.async_step_reconfigure({"any": "data"})
+
+    mock_replace.assert_awaited_once()
+    assert result is sentinel
