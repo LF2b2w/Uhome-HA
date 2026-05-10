@@ -6,6 +6,12 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.components.application_credentials import (
+    CONF_CLIENT_ID as APP_CREDS_CLIENT_ID,
+    CONF_DOMAIN as APP_CREDS_DOMAIN,
+    CONF_ID as APP_CREDS_ID,
+    DATA_COMPONENT as APP_CREDS_DATA,
+)
 from homeassistant.config_entries import ConfigEntry, ConfigFlowResult
 from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
 from homeassistant.core import HomeAssistant, callback
@@ -100,6 +106,33 @@ class UhomeOAuth2FlowHandler(
 
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+        )
+
+    def _get_existing_credential(self) -> dict | None:
+        """Return the first stored credential dict for this domain, or None."""
+        storage = self.hass.data.get(APP_CREDS_DATA)
+        if storage is None:
+            return None
+        for item in storage.async_items():
+            if item.get(APP_CREDS_DOMAIN) == DOMAIN:
+                return item
+        return None
+
+    async def async_step_replace_credentials(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Render the replace-credentials form (submit logic added in a later task)."""
+        existing = self._get_existing_credential()
+        default_client_id = existing.get(APP_CREDS_CLIENT_ID, "") if existing else ""
+
+        return self.async_show_form(
+            step_id="replace_credentials",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("client_id", default=default_client_id): str,
+                    vol.Required("client_secret", default=""): str,
+                }
+            ),
         )
 
     async def async_oauth_create_entry(
