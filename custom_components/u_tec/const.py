@@ -19,7 +19,6 @@ DEFAULT_DISCOVERY_INTERVAL = 300  # seconds (5 minutes)
 OAUTH2_AUTHORIZE = "https://oauth.u-tec.com/authorize"
 OAUTH2_TOKEN = "https://oauth.u-tec.com/token"
 
-CONF_API_SCOPE = "scope"
 CONF_PUSH_ENABLED = "push_enabled"
 CONF_PUSH_DEVICES = "push_devices"
 CONF_HA_DEVICES = "HomeAssistant_devices"

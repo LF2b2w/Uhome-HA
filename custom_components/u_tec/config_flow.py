@@ -1,5 +1,6 @@
 """Config flow for Uhome."""
 
+from collections.abc import Mapping
 import logging
 from typing import Any
 
@@ -20,8 +21,7 @@ from homeassistant.config_entries import (
     SOURCE_REAUTH,
     SOURCE_RECONFIGURE,
 )
-from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import callback
 from homeassistant.helpers import config_entry_oauth2_flow
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.selector import (
@@ -30,7 +30,6 @@ from homeassistant.helpers.selector import (
     SelectSelectorConfig,
     SelectSelectorMode,
 )
-from homeassistant.util import Mapping
 
 from utec_py.devices.device import BaseDevice
 from utec_py.devices.light import Light as UhomeLight
@@ -76,6 +75,7 @@ class UhomeOAuth2FlowHandler(
 
     DOMAIN = DOMAIN
     VERSION = 2
+    MINOR_VERSION = 2
 
     def __init__(self) -> None:
         """Initialize Uhome OAuth2 flow."""
@@ -196,12 +196,6 @@ class UhomeOAuth2FlowHandler(
                 options=dict(entry.options),
             )
 
-        # NOTE: this branch is currently dead code — the existing
-        # async_step_reauth_confirm → async_step_user path aborts with
-        # single_instance_allowed before OAuth runs. Kept here so a future
-        # fix to the reauth path (routing reauth_confirm through pick_implementation
-        # or replace_credentials directly) gets correct entry-update behavior
-        # automatically.
         if self.source == SOURCE_REAUTH:
             entry = self._get_reauth_entry()
             return self.async_update_reload_and_abort(
@@ -215,19 +209,30 @@ class UhomeOAuth2FlowHandler(
             CONF_PUSH_DEVICES: [],  # Empty list means all devices
             CONF_HA_DEVICES: [],
         }
+        # Static title — flow_impl.name is "Configuration.yaml" for the in-memory
+        # LocalOAuth2Implementation built in async_step_replace_credentials, which
+        # would surface as the entry title in the HA UI. Use the integration name.
         return self.async_create_entry(
-            title=self.flow_impl.name, data=data, options=options
+            title="U-Tec", data=data, options=options
         )
 
     async def _commit_pending_credential(self) -> None:
         """Persist the deferred credential to the application_credentials store.
 
         Called from async_oauth_create_entry on the OAuth-success path. For items
-        whose client_id matches the new one, we delete BEFORE import (otherwise
+        whose client_id matches the new one, delete BEFORE import — otherwise
         async_import_item is a no-op on duplicate suggested_id and the secret
-        wouldn't update). For items with a different client_id, we import first
-        then delete — preserving a valid cred for the entry's auth_implementation
-        reference throughout.
+        wouldn't rotate. Delete failures in that pre-import phase are therefore
+        re-raised so the flow aborts instead of reporting a phantom success. For
+        items with a different client_id, import first then delete: HA's
+        async_delete_item refuses to delete a credential currently
+        referenced by an entry's auth_implementation, but the new cred has the
+        canonical auth_domain ("u_tec") so importing it first means the entry
+        can resolve a valid implementation regardless of whether the legacy
+        delete succeeds. (Legacy entries with auth_implementation pointing at
+        a credential item_id are normalised to the canonical auth_domain by
+        async_migrate_entry at integration setup, so by the time this runs the
+        delete should not be blocked.)
         """
         assert self._pending_credential is not None  # guarded by caller
         new_client_id = self._pending_credential.client_id
@@ -245,14 +250,18 @@ class UhomeOAuth2FlowHandler(
                     other_ids.append(item[APP_CREDS_ID])
 
         for item_id in matching_ids:
+            # Delete failure here cannot be swallowed: async_import_client_credential
+            # is a no-op on duplicate suggested_id, so a leftover record means the
+            # secret silently doesn't rotate while OAuth still reports success.
             try:
                 await storage.async_delete_item(item_id)
             except Exception as err:  # noqa: BLE001
-                _LOGGER.warning(
-                    "Failed to delete pre-existing u_tec credential %s before re-import: %s",
+                _LOGGER.error(
+                    "Aborting u_tec credential rotation: failed to delete pre-existing record %s",
                     item_id,
-                    err,
+                    exc_info=err,
                 )
+                raise
 
         await async_import_client_credential(
             self.hass,
@@ -267,27 +276,22 @@ class UhomeOAuth2FlowHandler(
                     await storage.async_delete_item(item_id)
                 except Exception as err:  # noqa: BLE001
                     _LOGGER.warning(
-                        "Failed to delete stale u_tec credential %s: %s",
+                        "Failed to delete stale u_tec credential %s",
                         item_id,
-                        err,
+                        exc_info=err,
                     )
 
     async def async_step_reauth(
-        self, entry_data: Mapping[str, vol.Any]
+        self, entry_data: Mapping[str, Any]
     ) -> ConfigFlowResult:
-        """Perform reauth upon migration of old entries."""
-        return await self.async_step_reauth_confirm(entry_data)
+        """Re-authenticate an existing entry.
 
-    async def async_step_reauth_confirm(
-        self, user_input: Mapping[str, vol.Any] | None = None
-    ) -> ConfigFlowResult:
-        """Dialog that informs the user that reauth is required."""
-        if user_input is None:
-            return self.async_show_form(
-                step_id="reauth_confirm",
-                data_schema=vol.Schema({}),
-            )
-        return await self.async_step_user()
+        Dispatch directly to the credentials form — no confirmation step.
+        The framework hands us the entry's data dict but we don't need it:
+        the form prefills client_id from the application_credentials store,
+        and OAuth-success updates the entry in async_oauth_create_entry.
+        """
+        return await self.async_step_replace_credentials()
 
     async def async_step_reconfigure(
         self, entry_data: Mapping[str, Any] | None = None

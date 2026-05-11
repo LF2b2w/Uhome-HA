@@ -1,16 +1,9 @@
 {
   "config": {
     "step": {
-      "pick_implementation": {
-        "title": "[%key:common::config_flow::title::oauth2_pick_implementation%]"
-      },
-      "reauth_confirm": {
-        "title": "Reauthenticate with Uhome",
-        "description": "The Uhome integration needs to re-authenticate your account"
-      },
       "replace_credentials": {
         "title": "U-Tec credentials",
-        "description": "Enter your Client ID and Client Secret from the Xthings app (My Account → OpenAPI). Submitting will start the U-Tec authorization. The Client Secret is not displayed; if you've used this integration before, please re-enter it.",
+        "description": "Enter your Client ID and Client Secret from the Xthings app (My Account → OpenAPI). Submitting will start the U-Tec authorization. The Client Secret is never displayed back — re-enter it here even if you are only rotating the secret.",
         "data": {
           "client_id": "Client ID",
           "client_secret": "Client Secret"
@@ -39,7 +32,6 @@
         "no_api_conf": "API not available",
         "CE_invalid": "Invalid configuration",
         "cannot_connect": "Failed to connect to API",
-        "credential_import_failed": "Failed to register the new credentials. Verify they are correct and try again.",
         "empty_credentials": "Both Client ID and Client Secret are required."
     }
   },

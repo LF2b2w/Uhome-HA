@@ -169,15 +169,91 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Migrate old config entries to current version."""
     _LOGGER.debug(
-        "Migrating config entry from version %s to version 2", config_entry.version
+        "Migrating u_tec config entry from %s.%s to 2.2",
+        config_entry.version,
+        config_entry.minor_version,
     )
     if config_entry.version < 2:
         new_data = {**config_entry.data}
-        # Remove raw secrets stored in legacy entries
         new_data.pop(CONF_CLIENT_SECRET, None)
         new_data.pop(CONF_CLIENT_ID, None)
         hass.config_entries.async_update_entry(
             config_entry, data=new_data, version=2, minor_version=1
         )
-        _LOGGER.info("Migrated config entry to version 2")
+        _LOGGER.info("Migrated u_tec config entry to version 2.1")
+
+    if config_entry.version == 2 and config_entry.minor_version < 2:
+        await _migrate_auth_implementation_to_canonical(hass, config_entry)
+        hass.config_entries.async_update_entry(config_entry, minor_version=2)
+        _LOGGER.info("Migrated u_tec config entry to version 2.2")
+
     return True
+
+
+async def _migrate_auth_implementation_to_canonical(
+    hass: HomeAssistant, config_entry: ConfigEntry
+) -> None:
+    """Re-key legacy credentials to use the canonical auth_domain.
+
+    Pre-fix entries created by the original config flow set
+    ``data["auth_implementation"]`` to the credential's item_id
+    (e.g. ``u_tec.<client_id>``) and the stored credential defaults
+    ``auth_domain`` to that same item_id. The new flow always references the
+    canonical ``u_tec`` auth_domain. Without this migration, rotating the
+    credential through Reconfigure/Reauth on a legacy entry hits HA's safety
+    check in ``async_delete_item`` (refuses to delete a credential still
+    referenced by ``auth_implementation``) and silently no-ops the rotation.
+    """
+    # Local imports to avoid a hard import-time dependency on application_credentials.
+    from homeassistant.components.application_credentials import (
+        CONF_AUTH_DOMAIN,
+        CONF_CLIENT_ID,
+        CONF_CLIENT_SECRET,
+        CONF_DOMAIN,
+        DATA_COMPONENT,
+        ClientCredential,
+        async_import_client_credential,
+    )
+
+    current_impl = config_entry.data.get("auth_implementation")
+    if current_impl == DOMAIN:
+        return
+
+    storage = hass.data.get(DATA_COMPONENT)
+    legacy_cred: dict | None = None
+    if storage is not None:
+        for item in storage.async_items():
+            if item.get(CONF_DOMAIN) != DOMAIN:
+                continue
+            if item["id"] == current_impl:
+                legacy_cred = item
+                break
+
+    # Point the entry at the canonical auth_domain BEFORE touching storage so
+    # async_delete_item's "still in use" guard no longer fires.
+    hass.config_entries.async_update_entry(
+        config_entry,
+        data={**config_entry.data, "auth_implementation": DOMAIN},
+    )
+
+    if storage is None or legacy_cred is None:
+        return
+
+    if legacy_cred.get(CONF_AUTH_DOMAIN) == DOMAIN:
+        return
+
+    client_id = legacy_cred[CONF_CLIENT_ID]
+    client_secret = legacy_cred[CONF_CLIENT_SECRET]
+    try:
+        await storage.async_delete_item(legacy_cred["id"])
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning(
+            "Could not delete legacy u_tec credential %s during migration",
+            legacy_cred["id"],
+            exc_info=err,
+        )
+        return
+
+    await async_import_client_credential(
+        hass, DOMAIN, ClientCredential(client_id, client_secret), DOMAIN
+    )

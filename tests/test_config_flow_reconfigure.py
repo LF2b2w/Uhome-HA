@@ -9,8 +9,6 @@ to refresh against valid creds.
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # Form rendering
@@ -244,6 +242,36 @@ async def test_reconfigure_step_routes_to_replace_credentials(hass):
 
 
 # ---------------------------------------------------------------------------
+# async_step_reauth — framework entry point for reauth on token-expired entry
+# ---------------------------------------------------------------------------
+
+
+async def test_reauth_step_routes_directly_to_replace_credentials(hass):
+    """async_step_reauth dispatches straight to the credentials form.
+
+    No confirmation step. The framework hands us the existing entry's data
+    dict; we drop it. The credentials form is the first thing the user sees.
+    """
+    from custom_components.u_tec.config_flow import UhomeOAuth2FlowHandler
+
+    handler = UhomeOAuth2FlowHandler()
+    handler.hass = hass
+
+    sentinel = {"type": "form", "step_id": "replace_credentials"}
+    with patch.object(
+        handler,
+        "async_step_replace_credentials",
+        new=AsyncMock(return_value=sentinel),
+    ) as mock_replace:
+        result = await handler.async_step_reauth(
+            {"auth_implementation": "u_tec", "token": {"access_token": "old"}}
+        )
+
+    mock_replace.assert_awaited_once_with()
+    assert result is sentinel
+
+
+# ---------------------------------------------------------------------------
 # async_oauth_create_entry — commits deferred credential, branches on source
 # ---------------------------------------------------------------------------
 
@@ -391,6 +419,59 @@ async def test_async_oauth_create_entry_rotates_secret_when_client_id_matches(ha
     assert len(u_tec_items) == 1
     assert u_tec_items[0][CONF_CLIENT_ID] == "same-id"
     assert u_tec_items[0][CONF_CLIENT_SECRET] == "new-secret"
+
+
+async def test_async_oauth_create_entry_aborts_when_matching_delete_fails(hass):
+    """If the pre-import delete of a matching-client_id record fails, raise.
+
+    async_import_client_credential silently no-ops on duplicate suggested_id, so
+    if the matching record can't be deleted the secret would not rotate while
+    OAuth still reports success. The handler must surface that failure instead
+    of returning a phantom create_entry.
+    """
+    from homeassistant.components.application_credentials import (
+        DATA_COMPONENT,
+        CONF_CLIENT_ID,
+        CONF_CLIENT_SECRET,
+        CONF_DOMAIN,
+        ClientCredential,
+        async_import_client_credential,
+    )
+    from homeassistant.setup import async_setup_component
+    import pytest
+
+    from custom_components.u_tec.config_flow import UhomeOAuth2FlowHandler
+    from custom_components.u_tec.const import DOMAIN
+
+    await async_setup_component(hass, "application_credentials", {})
+    await async_import_client_credential(
+        hass, DOMAIN, ClientCredential("same-id", "old-secret"), "u_tec"
+    )
+
+    handler = UhomeOAuth2FlowHandler()
+    handler.hass = hass
+    handler.context = {"source": "user"}
+    handler._pending_credential = ClientCredential("same-id", "new-secret")
+    flow_impl = MagicMock()
+    flow_impl.name = "u_tec"
+    handler.flow_impl = flow_impl
+
+    storage = hass.data[DATA_COMPONENT]
+    boom = RuntimeError("simulated delete failure")
+    with patch.object(
+        storage, "async_delete_item", new=AsyncMock(side_effect=boom)
+    ):
+        with pytest.raises(RuntimeError, match="simulated delete failure"):
+            await handler.async_oauth_create_entry(
+                {"token": {"access_token": "tok"}, "auth_implementation": "u_tec"}
+            )
+
+    # Store is unchanged: original cred still present with its original secret.
+    items = list(storage.async_items())
+    u_tec_items = [i for i in items if i[CONF_DOMAIN] == DOMAIN]
+    assert len(u_tec_items) == 1
+    assert u_tec_items[0][CONF_CLIENT_ID] == "same-id"
+    assert u_tec_items[0][CONF_CLIENT_SECRET] == "old-secret"
 
 
 async def test_async_oauth_create_entry_no_pending_does_not_touch_store(hass):

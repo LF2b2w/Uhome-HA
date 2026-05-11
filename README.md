@@ -1,5 +1,7 @@
 # Uhome (U-Tec) Home Assistant Integration
 
+> **Fork notice:** This is a fork of [LF2b2w/Uhome-HA](https://github.com/LF2b2w/Uhome-HA), the original repository by [@LF2b2w](https://github.com/LF2b2w). The upstream project currently appears to be unmaintained, so this fork exists to keep the integration working. Any changes made here will be offered back to the upstream repository should it become responsive again.
+
 A Home Assistant integration for U-Tec smart home devices via the Uhome API that allows you to control your locks, lights, switches, and sensors through Home Assistant.
 
 ## Device Types
@@ -27,8 +29,13 @@ A Home Assistant integration for U-Tec smart home devices via the Uhome API that
 - API Credentials
 - External Access Configured (ie., Nabu Casa)
 
+## Ensure Home Assistant knows its own URL
+For the Configuration step below to work, Home Assistant must know its own URL.
+
+Navigate to Settings > System > Network and set the Home Assistant URL (Normally `http://homeassistant.local:8123`)
+
 ## Getting Your Credentials
-#### Having your credentials is nessecary to configure the integration, so get them before you install it.
+#### Having your credentials is necessary to configure the integration, so get them before you install it.
 
 API credentials are now available directly in the Xthings Home app (formerly U-Home) version 3.5.5 or later. No need to submit a request through the developer portal.
 
@@ -39,7 +46,7 @@ API credentials are now available directly in the Xthings Home app (formerly U-H
 ![Steps to enable OpenAPI in the app](images/api_enable_steps.png)
 
 Once activated, you will see your `Client ID`, `Client Secret`, `Scope`, and `RedirectUri`.
-- Set `RedirectUri` to `https://my.home-assistant.io/redirect/oauth`
+- Set `RedirectUri` to `https://my.home-assistant.io/redirect/oauth` exactly as written — do not replace the hostname with your own Home Assistant URL
 - Confirm `Scope` is set to `OpenAPI`
 - Tap **Save**
 
@@ -58,10 +65,6 @@ Click add custom repo\
 Paste the URL of this repo and choose type integration\
 Search for "U-tec"\
 Click "Install"
-#### Set up redirect URI in Uhome app
-In the Uhome app, in the *Develop Console* tab - \
-    Set redirect URI - `https://my.home-assistant.io/redirect/oauth`\
-Note: Enter this url exactly as it is here. Do not replace the hostname with your own home assistant.
 
 ### Manual Installation
 Download the repository\
@@ -69,14 +72,16 @@ Copy the custom_components/Homeassistant-utec folder to your Home Assistant's cu
 Restart Home Assistant
 
 ## Configuration
-In Home Assistant, go to Configuration > Integrations\
-Click the "+" button to add a new integration\
+In Home Assistant, go to Settings > Devices & services > Integrations\
+Click the "+ Add integration" button\
 Search for "U-Tec"\
-You will need to provide this information from the U-Home mobile app under Settings -> Develop Console :
+You will need to provide the credentials information from above:
 - Client ID
 - Client Secret
-- API Scope (default: 'openapi')
 
+When you submit, you will be taken to the U-Tec [OAuth site](https://oauth.u-tec.com/login/auth) where you need to login with your U-Tec username and password.  That will then ask you to authorize the OAuth connection.  After that it will take you back to Home Assistant and ask you to link your account to Home Assistant.
+
+If the credentials are ever rotated by U-Tec or you regenerate them in the Xthings app, you can update them in place via the integration's **Reconfigure** action (3-dot menu on the integration card) — no need to remove and re-add the integration.
 
 ## Troubleshooting
 See [FAQ](https://github.com/LF2b2w/Uhome-HA/discussions/2)
