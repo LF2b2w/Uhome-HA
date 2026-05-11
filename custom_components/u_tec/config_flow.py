@@ -186,7 +186,8 @@ class UhomeOAuth2FlowHandler(
         """
         if self._pending_credential is not None:
             await self._commit_pending_credential()
-            data = {**data, "auth_implementation": "u_tec"}
+            self._pending_credential = None
+            data = {**data, "auth_implementation": DOMAIN}
 
         if self.source == SOURCE_RECONFIGURE:
             entry = self._get_reconfigure_entry()
@@ -267,7 +268,7 @@ class UhomeOAuth2FlowHandler(
             self.hass,
             DOMAIN,
             self._pending_credential,
-            "u_tec",
+            DOMAIN,
         )
 
         if storage is not None:
