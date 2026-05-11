@@ -38,7 +38,6 @@ from utec_py.devices.lock import Lock as UhomeLock
 from utec_py.devices.switch import Switch as UhomeSwitch
 
 from .const import (
-    CONF_API_SCOPE,
     CONF_HA_DEVICES,
     CONF_OPTIMISTIC_LIGHTS,
     CONF_OPTIMISTIC_LOCKS,
@@ -47,14 +46,8 @@ from .const import (
     CONF_PUSH_ENABLED,
     DEFAULT_API_SCOPE,
     DOMAIN,
-)
-
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        # vol.Required(CONF_CLIENT_ID): str,
-        # vol.Optional(CONF_PUSH_ENABLED, default="push_enabled"): BooleanSelector(),
-        vol.Optional(CONF_API_SCOPE, default=DEFAULT_API_SCOPE): str,
-    }
+    OAUTH2_AUTHORIZE,
+    OAUTH2_TOKEN,
 )
 
 
@@ -87,8 +80,7 @@ class UhomeOAuth2FlowHandler(
     def __init__(self) -> None:
         """Initialize Uhome OAuth2 flow."""
         super().__init__()
-        self._api_scope = None
-        self.data = {}
+        self._pending_credential: ClientCredential | None = None
 
     @property
     def logger(self) -> logging.Logger:
@@ -98,29 +90,18 @@ class UhomeOAuth2FlowHandler(
     @property
     def extra_authorize_data(self) -> dict[str, Any]:
         """Extra data that needs to be appended to the authorize url."""
-        return {"scope": self._api_scope or DEFAULT_API_SCOPE}
+        return {"scope": DEFAULT_API_SCOPE}
 
     async def async_step_user(self, user_input=None) -> ConfigFlowResult:
-        """Prompt the user to enter their client credentials and API scope."""
+        """Entry point for initial setup.
+
+        Always renders the credential form (blank or prefilled from any existing
+        application_credentials entry) — bypasses HA's stock "missing_credentials"
+        prompt entirely so the user only ever sees one credential form per setup.
+        """
         if self._async_current_entries():
             return self.async_abort(reason="single_instance_allowed")
-
-        # Issue #50 recovery: if credentials are already stored from a prior
-        # failed attempt, route the user to the inline replace form instead
-        # of the scope-only user form. This avoids the hidden Application
-        # Credentials menu detour for fixing typos.
-        if self._get_existing_credential() is not None:
-            return await self.async_step_replace_credentials()
-
-        if user_input is not None:
-            self.data = user_input
-            return await self.async_step_pick_implementation()
-
-        errors = {}
-
-        return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
-        )
+        return await self.async_step_replace_credentials()
 
     def _get_existing_credential(self) -> dict | None:
         """Return the first stored credential dict for this domain, or None."""
@@ -135,15 +116,18 @@ class UhomeOAuth2FlowHandler(
     async def async_step_replace_credentials(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Render and process the inline replace-credentials form.
+        """Render the credential form and start OAuth with an in-memory implementation.
 
-        Used both for issue #50 recovery (initial setup with stale creds in
-        HA's app-creds store) and for reconfigure of working entries.
+        Used by initial setup (via async_step_user), issue #50 recovery (stale creds
+        in HA's app-creds store from a prior failed attempt), and reconfigure of a
+        working entry (via async_step_reconfigure).
 
-        For items whose client_id matches the new one, we delete BEFORE import
-        so the import is not a no-op (async_import_item returns early on duplicate
-        suggested_id). For items with a different client_id, import first then
-        delete — so a partial failure leaves the entry pointing at a valid cred.
+        The application_credentials store is NOT mutated here. We build an in-memory
+        LocalOAuth2Implementation with the entered creds, set self.flow_impl directly,
+        and jump to async_step_auth — bypassing async_step_pick_implementation. The
+        actual store update happens in async_oauth_create_entry, on the OAuth-success
+        path only. Consequence: if OAuth fails, any existing credential is untouched
+        and a working config entry continues to refresh against valid creds.
         """
         if user_input is not None:
             client_id = (user_input.get("client_id") or "").strip()
@@ -155,61 +139,16 @@ class UhomeOAuth2FlowHandler(
                     errors={"base": "empty_credentials"},
                 )
 
-            # Snapshot existing items grouped by whether their client_id matches.
-            storage = self.hass.data.get(APP_CREDS_DATA)
-            matching_ids: list[str] = []
-            other_ids: list[str] = []
-            if storage is not None:
-                for item in storage.async_items():
-                    if item.get(APP_CREDS_DOMAIN) != DOMAIN:
-                        continue
-                    if item.get(APP_CREDS_CLIENT_ID) == client_id:
-                        matching_ids.append(item[APP_CREDS_ID])
-                    else:
-                        other_ids.append(item[APP_CREDS_ID])
-
-            # For matching client_ids, delete BEFORE import so the import is not
-            # a no-op. Acceptable safety tradeoff: between delete and import there
-            # is no cred for this domain, but no concurrent code runs (single
-            # coroutine, no foreign awaits in the gap).
-            for item_id in matching_ids:
-                try:
-                    await storage.async_delete_item(item_id)
-                except Exception as err:  # noqa: BLE001
-                    _LOGGER.warning(
-                        "Failed to delete pre-existing u_tec credential %s before re-import: %s",
-                        item_id,
-                        err,
-                    )
-
-            try:
-                await async_import_client_credential(
-                    self.hass,
-                    DOMAIN,
-                    ClientCredential(client_id, client_secret),
-                    "u_tec",
-                )
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.error("Failed to import new u_tec credential: %s", err)
-                return self._show_replace_form(
-                    client_id=client_id,
-                    errors={"base": "credential_import_failed"},
-                )
-
-            # For non-matching client_ids, delete AFTER import (safe order —
-            # entry still references a valid cred while old ones are cleaned up).
-            if storage is not None:
-                for item_id in other_ids:
-                    try:
-                        await storage.async_delete_item(item_id)
-                    except Exception as err:  # noqa: BLE001
-                        _LOGGER.warning(
-                            "Failed to delete stale u_tec credential %s: %s",
-                            item_id,
-                            err,
-                        )
-
-            return await self.async_step_pick_implementation()
+            self._pending_credential = ClientCredential(client_id, client_secret)
+            self.flow_impl = config_entry_oauth2_flow.LocalOAuth2Implementation(
+                self.hass,
+                DOMAIN,
+                client_id,
+                client_secret,
+                OAUTH2_AUTHORIZE,
+                OAUTH2_TOKEN,
+            )
+            return await self.async_step_auth()
 
         return self._show_replace_form(client_id=None)
 
@@ -238,7 +177,17 @@ class UhomeOAuth2FlowHandler(
     async def async_oauth_create_entry(
         self, data: dict
     ) -> ConfigFlowResult:
-        """Create or update the config entry depending on the flow source."""
+        """Create or update the config entry depending on the flow source.
+
+        If credentials were entered via async_step_replace_credentials and OAuth
+        succeeded, commit them to the application_credentials store now and rewrite
+        the entry's auth_implementation reference to the standard "u_tec" auth_domain
+        (which is what async_get_implementations resolves against).
+        """
+        if self._pending_credential is not None:
+            await self._commit_pending_credential()
+            data = {**data, "auth_implementation": "u_tec"}
+
         if self.source == SOURCE_RECONFIGURE:
             entry = self._get_reconfigure_entry()
             return self.async_update_reload_and_abort(
@@ -269,6 +218,59 @@ class UhomeOAuth2FlowHandler(
         return self.async_create_entry(
             title=self.flow_impl.name, data=data, options=options
         )
+
+    async def _commit_pending_credential(self) -> None:
+        """Persist the deferred credential to the application_credentials store.
+
+        Called from async_oauth_create_entry on the OAuth-success path. For items
+        whose client_id matches the new one, we delete BEFORE import (otherwise
+        async_import_item is a no-op on duplicate suggested_id and the secret
+        wouldn't update). For items with a different client_id, we import first
+        then delete — preserving a valid cred for the entry's auth_implementation
+        reference throughout.
+        """
+        assert self._pending_credential is not None  # guarded by caller
+        new_client_id = self._pending_credential.client_id
+
+        storage = self.hass.data.get(APP_CREDS_DATA)
+        matching_ids: list[str] = []
+        other_ids: list[str] = []
+        if storage is not None:
+            for item in storage.async_items():
+                if item.get(APP_CREDS_DOMAIN) != DOMAIN:
+                    continue
+                if item.get(APP_CREDS_CLIENT_ID) == new_client_id:
+                    matching_ids.append(item[APP_CREDS_ID])
+                else:
+                    other_ids.append(item[APP_CREDS_ID])
+
+        for item_id in matching_ids:
+            try:
+                await storage.async_delete_item(item_id)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Failed to delete pre-existing u_tec credential %s before re-import: %s",
+                    item_id,
+                    err,
+                )
+
+        await async_import_client_credential(
+            self.hass,
+            DOMAIN,
+            self._pending_credential,
+            "u_tec",
+        )
+
+        if storage is not None:
+            for item_id in other_ids:
+                try:
+                    await storage.async_delete_item(item_id)
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "Failed to delete stale u_tec credential %s: %s",
+                        item_id,
+                        err,
+                    )
 
     async def async_step_reauth(
         self, entry_data: Mapping[str, vol.Any]

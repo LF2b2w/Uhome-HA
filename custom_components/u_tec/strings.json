@@ -9,8 +9,8 @@
         "description": "The Uhome integration needs to re-authenticate your account"
       },
       "replace_credentials": {
-        "title": "Update U-Tec credentials",
-        "description": "Enter your Client ID and Client Secret from the Xthings app (My Account → OpenAPI). Submitting will replace any previously stored credentials and start a new authorization. The Client Secret is not displayed for security; please re-enter it.",
+        "title": "U-Tec credentials",
+        "description": "Enter your Client ID and Client Secret from the Xthings app (My Account → OpenAPI). Submitting will start the U-Tec authorization. The Client Secret is not displayed; if you've used this integration before, please re-enter it.",
         "data": {
           "client_id": "Client ID",
           "client_secret": "Client Secret"
