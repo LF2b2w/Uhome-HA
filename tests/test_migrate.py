@@ -1,5 +1,7 @@
 """Tests for async_migrate_entry."""
 
+from unittest.mock import AsyncMock, patch
+
 from homeassistant.components.application_credentials import (
     CONF_AUTH_DOMAIN,
     CONF_CLIENT_ID,
@@ -7,6 +9,7 @@ from homeassistant.components.application_credentials import (
     CONF_DOMAIN,
     DATA_COMPONENT,
 )
+from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -138,3 +141,57 @@ async def test_migrate_legacy_entry_without_matching_cred_still_bumps(hass):
     assert await async_migrate_entry(hass, entry) is True
     assert entry.minor_version == 2
     assert entry.data["auth_implementation"] == DOMAIN
+
+
+async def test_migrate_rolls_back_entry_when_legacy_delete_fails(hass):
+    """If the legacy-cred delete fails, the entry must still resolve an impl.
+
+    HA's async_import_client_credential is a no-op on suggested_id collision
+    (always the case here — same client_id), so we must delete legacy before
+    we can import the canonical cred. If that delete fails after the entry
+    has been pointed at the canonical auth_domain, the entry would orphan.
+
+    Mitigation: helper rolls the entry's auth_implementation back to the
+    legacy item_id (still in storage), and async_migrate_entry suppresses
+    the exception without bumping minor_version. Result: entry loads against
+    the still-present legacy cred; migration retries on the next boot.
+    """
+    await async_setup_component(hass, "application_credentials", {})
+    storage = hass.data[DATA_COMPONENT]
+
+    # Legacy cred: auth_domain defaults to item_id (NOT "u_tec").
+    await storage.async_create_item(
+        {CONF_DOMAIN: DOMAIN, CONF_CLIENT_ID: "abc", CONF_CLIENT_SECRET: "shh"}
+    )
+    legacy_item_id = next(iter(storage.async_items()))["id"]
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="e6",
+        data={"auth_implementation": legacy_item_id, "token": {"access_token": "tok"}},
+        version=2,
+        minor_version=1,
+    )
+    entry.add_to_hass(hass)
+
+    with patch.object(
+        storage,
+        "async_delete_item",
+        new=AsyncMock(side_effect=RuntimeError("simulated delete failure")),
+    ):
+        assert await async_migrate_entry(hass, entry) is True
+
+    # minor_version NOT bumped — migration deferred to next boot.
+    assert entry.minor_version == 1
+    # Entry rolled back to the legacy item_id so it can still resolve.
+    assert entry.data["auth_implementation"] == legacy_item_id
+    # Legacy cred still in storage.
+    items = list(storage.async_items())
+    assert len(items) == 1
+    assert items[0][CONF_CLIENT_ID] == "abc"
+
+    # Resolution succeeds via the legacy cred.
+    impl = await config_entry_oauth2_flow.async_get_config_entry_implementation(
+        hass, entry
+    )
+    assert impl is not None

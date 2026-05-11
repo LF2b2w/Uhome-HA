@@ -183,7 +183,13 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         _LOGGER.info("Migrated u_tec config entry to version 2.1")
 
     if config_entry.version == 2 and config_entry.minor_version < 2:
-        await _migrate_auth_implementation_to_canonical(hass, config_entry)
+        try:
+            await _migrate_auth_implementation_to_canonical(hass, config_entry)
+        except Exception:  # noqa: BLE001
+            # Helper rolled the entry back to a working state; defer the
+            # minor_version bump so migration retries on next boot. Returning
+            # True lets the entry load against its (still-legacy) cred.
+            return True
         hass.config_entries.async_update_entry(config_entry, minor_version=2)
         _LOGGER.info("Migrated u_tec config entry to version 2.2")
 
@@ -247,12 +253,21 @@ async def _migrate_auth_implementation_to_canonical(
     try:
         await storage.async_delete_item(legacy_cred["id"])
     except Exception as err:  # noqa: BLE001
+        # Roll back the entry's auth_implementation so it still resolves to
+        # the legacy cred (still in storage). Re-raise so the caller skips the
+        # minor_version bump and migration retries on next boot — better than
+        # leaving the entry pointing at a non-existent implementation.
+        hass.config_entries.async_update_entry(
+            config_entry,
+            data={**config_entry.data, "auth_implementation": legacy_cred["id"]},
+        )
         _LOGGER.warning(
-            "Could not delete legacy u_tec credential %s during migration",
+            "Could not delete legacy u_tec credential %s during migration; "
+            "rolled back, will retry on next boot",
             legacy_cred["id"],
             exc_info=err,
         )
-        return
+        raise
 
     await async_import_client_credential(
         hass, DOMAIN, ClientCredential(client_id, client_secret), DOMAIN
