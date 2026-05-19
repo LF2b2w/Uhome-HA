@@ -128,10 +128,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinator": coordinator,
         "auth_data": auth_data,
         "webhook_handler": webhook_handler,
+        # Track previous push_enabled so async_update_options can detect a real
+        # change. entry.options reflects current state; without a stored prior
+        # we can't tell a toggle from a no-op data update (e.g. OAuth refresh).
+        "push_enabled": push_enabled,
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
-    # Unload the entry if the user disables push notifications
+    # Listener fires on ANY entry update (data or options). The handler is
+    # responsible for filtering down to actual option changes — see
+    # async_update_options. Calling async_reload from this listener on every
+    # update would loop on OAuth token refreshes, which the integration cannot
+    # recover from without a working async_unload_entry.
     entry.async_on_unload(entry.add_update_listener(async_update_options))
     # Unregister the webhook when the entry is unloaded
     entry.async_on_unload(webhook_handler.unregister_webhook)
@@ -141,29 +149,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle options update."""
-    # Get the webhook handler and coordinator
-    webhook_handler = hass.data[DOMAIN][entry.entry_id]["webhook_handler"]
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    auth_data = hass.data[DOMAIN][entry.entry_id]["auth_data"]
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a config entry."""
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, _PLATFORMS)
+    if unload_ok:
+        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    return unload_ok
 
-    # Check if push notification setting has changed
-    old_push_enabled = entry.data.get("options", {}).get(CONF_PUSH_ENABLED, True)
+
+async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle options update.
+
+    Reconciles webhook registration and push_devices inline based on the new
+    options. Deliberately does NOT call async_reload — token refreshes update
+    entry.data and would otherwise trigger a reload on every refresh.
+    """
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    webhook_handler = entry_data["webhook_handler"]
+    coordinator = entry_data["coordinator"]
+    auth_data = entry_data["auth_data"]
+
+    old_push_enabled = entry_data.get("push_enabled", True)
     new_push_enabled = entry.options.get(CONF_PUSH_ENABLED, True)
 
-    # Update push devices in coordinator
     coordinator.push_devices = entry.options.get(CONF_PUSH_DEVICES, [])
 
-    # Handle webhook registration/unregistration if needed
     if old_push_enabled != new_push_enabled:
         if new_push_enabled:
-            # Register webhook
             await webhook_handler.async_register_webhook(auth_data)
         else:
-            # Unregister webhook
-            webhook_handler.unregister_webhook()
-    await hass.config_entries.async_reload(entry.entry_id)
+            await webhook_handler.unregister_webhook()
+        entry_data["push_enabled"] = new_push_enabled
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:

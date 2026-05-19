@@ -141,3 +141,31 @@ async def test_unregister_noop_when_nothing_registered(hass, mock_uhome_api):
     h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
     # Neither _unregister_webhook nor _cancel_reregister is set — should not raise
     await h.unregister_webhook()
+
+
+async def test_register_twice_does_not_re_register_handler(hass, mock_uhome_api):
+    """webhook.async_register returns None — guard must still skip on second call.
+
+    Regression: storing the None return value as the "registered" flag broke the
+    guard, so the next call (e.g. the 24h re-register timer) re-entered the
+    block and webhook.async_register raised ValueError("Handler is already defined!").
+    """
+    h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
+
+    with patch(
+        "custom_components.u_tec.api.network.get_url",
+        return_value="https://ha.example.com",
+    ), patch(
+        "custom_components.u_tec.api.webhook.async_generate_url",
+        return_value="https://ha.example.com/api/webhook/x",
+    ), patch(
+        "custom_components.u_tec.api.webhook.async_register",
+        return_value=None,
+    ) as mock_register, patch(
+        "custom_components.u_tec.api.async_track_time_interval",
+        return_value=MagicMock(),
+    ):
+        await h.async_register_webhook(auth_data=MagicMock())
+        await h.async_register_webhook(auth_data=MagicMock())
+
+    assert mock_register.call_count == 1

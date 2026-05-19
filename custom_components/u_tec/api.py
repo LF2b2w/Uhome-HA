@@ -119,15 +119,20 @@ class AsyncPushUpdateHandler:
             _LOGGER.error("Failed to register webhook with U-Tec API: %s", err)
             return False
 
-        # Register HA-side webhook handler (only once)
+        # Register HA-side webhook handler (only once). webhook.async_register
+        # returns None, so we use _unregister_webhook as a boolean flag — True
+        # once registered. Was previously assigned the return value, which left
+        # it None and broke this guard on every re-entry (notably the 24h
+        # re-register timer), raising "Handler is already defined!".
         if not self._unregister_webhook:
-            self._unregister_webhook = webhook.async_register(
+            webhook.async_register(
                 self.hass,
                 DOMAIN,
                 WEBHOOK_HANDLER,
                 self.webhook_id,
                 self._handle_webhook,
             )
+            self._unregister_webhook = True
 
         self.webhook_url = webhook_url
 
