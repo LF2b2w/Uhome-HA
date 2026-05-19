@@ -1,8 +1,11 @@
 """Tests for AsyncPushUpdateHandler.async_register_webhook — URL resolution."""
 
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from homeassistant.helpers.network import NoURLAvailableError
+from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.u_tec.api import AsyncPushUpdateHandler
 
@@ -169,3 +172,46 @@ async def test_register_twice_does_not_re_register_handler(hass, mock_uhome_api)
         await h.async_register_webhook(auth_data=MagicMock())
 
     assert mock_register.call_count == 1
+
+
+async def test_24h_reregister_timer_does_not_raise(hass, mock_uhome_api):
+    """Advance time by 24h and verify the re-register timer fires cleanly.
+
+    Before the fix, the scheduled _async_reregister callback would call
+    webhook.async_register again (because the guard's flag had been set to None),
+    raising ValueError("Handler is already defined!"). With the boolean-flag
+    fix, the guard correctly skips re-registration on the second cycle.
+    """
+    h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
+
+    with patch(
+        "custom_components.u_tec.api.network.get_url",
+        return_value="https://ha.example.com",
+    ), patch(
+        "custom_components.u_tec.api.webhook.async_generate_url",
+        return_value="https://ha.example.com/api/webhook/x",
+    ), patch(
+        "custom_components.u_tec.api.webhook.async_register",
+        return_value=None,
+    ) as mock_register, patch(
+        "custom_components.u_tec.api.webhook.async_unregister",
+    ):
+        # Real async_track_time_interval scheduler — no mock — so the 24h timer
+        # actually arms.
+        await h.async_register_webhook(auth_data=MagicMock())
+
+        # 24h + 1 minute later, the daily re-register callback fires.
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(hours=24, minutes=1))
+        await hass.async_block_till_done()
+
+        # Exactly one HA-side registration despite the timer cycling. If the
+        # guard were broken, this would be 2 and the second call would raise.
+        assert mock_register.call_count == 1
+        # set_push_status fires for both the initial and the daily re-register —
+        # confirms the timer callback actually ran (the test would otherwise
+        # silently pass because the timer was never scheduled).
+        assert mock_uhome_api.set_push_status.await_count == 2
+
+        # Clean up the (now re-armed) timer so the lingering-timer guard in
+        # pytest-homeassistant-custom-component's teardown doesn't fail us.
+        await h.unregister_webhook()

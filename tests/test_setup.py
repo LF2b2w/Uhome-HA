@@ -231,3 +231,37 @@ async def test_unload_entry_leaves_data_when_platform_unload_fails(
 
     assert result is False
     assert entry.entry_id in hass.data[DOMAIN]
+
+
+async def test_oauth_token_refresh_does_not_unload_entry(hass, patched_uhomeapi):
+    """End-to-end: real async_update_entry → real update listener → no reload.
+
+    Exercises HA's full update-listener wiring rather than calling
+    async_update_options directly. This is the exact path an OAuth refresh
+    takes: OAuth2Session.async_ensure_token_valid → async_update_entry(data=...)
+    → fires entry.update_listeners → async_update_options. Before the fix, the
+    listener called async_reload, which silently transitioned the entry to
+    FAILED_UNLOAD because async_unload_entry was missing.
+    """
+    entry = make_config_entry(options={CONF_PUSH_ENABLED: False})
+    entry.add_to_hass(hass)
+
+    with _patched_setup_env(hass), patch.object(
+        hass.config_entries, "async_reload", new=AsyncMock(),
+    ) as mock_reload:
+        await async_setup_entry(hass, entry)
+        await hass.async_block_till_done()
+
+        # Simulate OAuth refresh writing a new token to entry.data — same call
+        # OAuth2Session.async_ensure_token_valid makes after a token refresh.
+        new_token = {**entry.data["token"], "access_token": "refreshed-token"}
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, "token": new_token},
+        )
+        await hass.async_block_till_done()
+
+    mock_reload.assert_not_called()
+    # async_reload would have triggered async_unload_platforms; verify the
+    # entry's coordinator + webhook handler are still the same instances.
+    assert entry.entry_id in hass.data[DOMAIN]
+    assert hass.data[DOMAIN][entry.entry_id]["push_enabled"] is False
