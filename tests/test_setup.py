@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from custom_components.u_tec import async_setup_entry, async_update_options
+from custom_components.u_tec import (
+    async_setup_entry,
+    async_unload_entry,
+    async_update_options,
+)
 from custom_components.u_tec.const import CONF_PUSH_ENABLED, DOMAIN
 from tests.common import make_config_entry
 
@@ -119,6 +123,145 @@ async def test_async_update_options_toggles_webhook_on(hass, patched_uhomeapi):
         await async_update_options(hass, entry)
         await hass.async_block_till_done()
 
-    # Exactly two registrations: initial setup (push=False so not called) + reload (push=True).
-    # The initial setup is push=False, so only the reload should have registered.
+    # Initial setup is push=False (no register). Flipping to push=True via the
+    # options listener registers the webhook inline — no reload required.
     assert mock_register.await_count == 1
+
+
+async def test_async_update_options_toggles_webhook_off(hass, patched_uhomeapi):
+    """Disabling push while integration is running unregisters the webhook."""
+    entry = make_config_entry(options={CONF_PUSH_ENABLED: True})
+    entry.add_to_hass(hass)
+
+    with _patched_setup_env(hass), patch(
+        "custom_components.u_tec.api.AsyncPushUpdateHandler.async_register_webhook",
+        new=AsyncMock(return_value=True),
+    ), patch(
+        "custom_components.u_tec.api.AsyncPushUpdateHandler.unregister_webhook",
+        new=AsyncMock(return_value=None),
+    ) as mock_unregister, patch.object(
+        hass.config_entries, "async_reload", new=AsyncMock(),
+    ):
+        await async_setup_entry(hass, entry)
+
+        object.__setattr__(entry, "options", MappingProxyType({CONF_PUSH_ENABLED: False}))
+        await async_update_options(hass, entry)
+
+    mock_unregister.assert_awaited_once()
+
+
+async def test_async_update_options_re_enable_after_disable_registers(hass, patched_uhomeapi):
+    """Push True → False → True actually re-registers (regression for entry.data lookup bug)."""
+    entry = make_config_entry(options={CONF_PUSH_ENABLED: True})
+    entry.add_to_hass(hass)
+
+    with _patched_setup_env(hass), patch(
+        "custom_components.u_tec.api.AsyncPushUpdateHandler.async_register_webhook",
+        new=AsyncMock(return_value=True),
+    ) as mock_register, patch(
+        "custom_components.u_tec.api.AsyncPushUpdateHandler.unregister_webhook",
+        new=AsyncMock(return_value=None),
+    ), patch.object(
+        hass.config_entries, "async_reload", new=AsyncMock(),
+    ):
+        await async_setup_entry(hass, entry)
+        # setup with push=True → 1 register call
+        assert mock_register.await_count == 1
+
+        object.__setattr__(entry, "options", MappingProxyType({CONF_PUSH_ENABLED: False}))
+        await async_update_options(hass, entry)
+        # off — still 1 register call
+        assert mock_register.await_count == 1
+
+        object.__setattr__(entry, "options", MappingProxyType({CONF_PUSH_ENABLED: True}))
+        await async_update_options(hass, entry)
+        # back on — should re-register
+        assert mock_register.await_count == 2
+
+
+async def test_async_update_options_does_not_reload(hass, patched_uhomeapi):
+    """OAuth token refresh path: listener fires with options unchanged. Must not call async_reload."""
+    entry = make_config_entry(options={CONF_PUSH_ENABLED: False})
+    entry.add_to_hass(hass)
+
+    with _patched_setup_env(hass), patch.object(
+        hass.config_entries, "async_reload", new=AsyncMock(),
+    ) as mock_reload:
+        await async_setup_entry(hass, entry)
+        # Listener fires after async_update_entry — options identical to setup.
+        await async_update_options(hass, entry)
+
+    mock_reload.assert_not_called()
+
+
+async def test_unload_entry_returns_true_and_clears_hass_data(hass, patched_uhomeapi):
+    """async_unload_entry must exist and clean up hass.data[DOMAIN][entry_id]."""
+    entry = make_config_entry(options={CONF_PUSH_ENABLED: False})
+    entry.add_to_hass(hass)
+
+    with _patched_setup_env(hass), patch.object(
+        hass.config_entries,
+        "async_unload_platforms",
+        new=AsyncMock(return_value=True),
+    ) as mock_unload_platforms:
+        await async_setup_entry(hass, entry)
+        assert entry.entry_id in hass.data[DOMAIN]
+
+        result = await async_unload_entry(hass, entry)
+
+    assert result is True
+    mock_unload_platforms.assert_awaited_once()
+    assert entry.entry_id not in hass.data.get(DOMAIN, {})
+
+
+async def test_unload_entry_leaves_data_when_platform_unload_fails(
+    hass, patched_uhomeapi,
+):
+    """If platforms fail to unload, hass.data must stay intact for next attempt."""
+    entry = make_config_entry(options={CONF_PUSH_ENABLED: False})
+    entry.add_to_hass(hass)
+
+    with _patched_setup_env(hass), patch.object(
+        hass.config_entries,
+        "async_unload_platforms",
+        new=AsyncMock(return_value=False),
+    ):
+        await async_setup_entry(hass, entry)
+        result = await async_unload_entry(hass, entry)
+
+    assert result is False
+    assert entry.entry_id in hass.data[DOMAIN]
+
+
+async def test_oauth_token_refresh_does_not_unload_entry(hass, patched_uhomeapi):
+    """End-to-end: real async_update_entry → real update listener → no reload.
+
+    Exercises HA's full update-listener wiring rather than calling
+    async_update_options directly. This is the exact path an OAuth refresh
+    takes: OAuth2Session.async_ensure_token_valid → async_update_entry(data=...)
+    → fires entry.update_listeners → async_update_options. Before the fix, the
+    listener called async_reload, which silently transitioned the entry to
+    FAILED_UNLOAD because async_unload_entry was missing.
+    """
+    entry = make_config_entry(options={CONF_PUSH_ENABLED: False})
+    entry.add_to_hass(hass)
+
+    with _patched_setup_env(hass), patch.object(
+        hass.config_entries, "async_reload", new=AsyncMock(),
+    ) as mock_reload:
+        await async_setup_entry(hass, entry)
+        await hass.async_block_till_done()
+
+        # Simulate OAuth refresh writing a new token to entry.data — same call
+        # OAuth2Session.async_ensure_token_valid makes after a token refresh.
+        new_token = {**entry.data["token"], "access_token": "refreshed-token"}
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, "token": new_token},
+        )
+        await hass.async_block_till_done()
+
+    mock_reload.assert_not_called()
+    # async_reload would have triggered async_unload_platforms; verify the
+    # entry's coordinator + webhook handler are still the same instances.
+    assert entry.entry_id in hass.data[DOMAIN]
+    assert hass.data[DOMAIN][entry.entry_id]["push_enabled"] is False
