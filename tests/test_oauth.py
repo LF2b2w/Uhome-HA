@@ -7,11 +7,8 @@ unwrapping a token refresh silently yields no usable token and the access token
 goes stale. These cover the unwrap and its wiring into the implementations.
 """
 
-from unittest.mock import AsyncMock, patch
-
+from aioresponses import aioresponses
 import pytest
-
-from homeassistant.helpers import config_entry_oauth2_flow
 
 from custom_components.u_tec.const import DOMAIN, OAUTH2_AUTHORIZE, OAUTH2_TOKEN
 from custom_components.u_tec.oauth import (
@@ -46,23 +43,12 @@ def test_unwrap_raises_when_no_access_token_present():
 
 
 async def test_local_impl_token_request_unwraps(hass):
-    """The mixin unwraps whatever the underlying HA token request returns.
-
-    We patch the superclass ``_token_request`` (HA's HTTP boundary) rather than
-    mock the network: hitting it for real spins up an aiohttp clientsession whose
-    pycares DNS resolver leaves a daemon ``_run_safe_shutdown_loop`` thread that
-    older pytest-homeassistant-custom-component builds flag as a lingering-thread
-    failure. Patching the boundary keeps the test hermetic and version-agnostic
-    while still proving the mixin is wired in and unwraps the {code,data} envelope.
-    """
+    """_token_request against the real {code,data} envelope returns standard fields."""
     impl = UtecLocalOAuth2Implementation(
         hass, DOMAIN, "client-id", "client-secret", OAUTH2_AUTHORIZE, OAUTH2_TOKEN,
     )
-    with patch.object(
-        config_entry_oauth2_flow.LocalOAuth2Implementation,
-        "_token_request",
-        new=AsyncMock(return_value=_WRAPPED),
-    ):
+    with aioresponses() as mock:
+        mock.post(OAUTH2_TOKEN, payload=_WRAPPED)
         result = await impl._token_request(
             {"grant_type": "refresh_token", "refresh_token": "r"}
         )
