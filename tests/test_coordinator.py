@@ -281,3 +281,59 @@ async def test_discover_device_missing_id_is_skipped(coordinator, mock_uhome_api
     }
     await coordinator.async_discover_devices()
     assert coordinator.devices == {}
+
+
+# --- error-envelope surfacing (U-Tec returns HTTP 200 with payload.error) ---
+
+
+async def test_async_update_data_invalid_token_payload_raises_config_entry_auth_failed(
+    coordinator, mock_uhome_api,
+):
+    """A revoked/expired token comes back as an HTTP-200 INVALID_TOKEN envelope.
+
+    It must surface as ConfigEntryAuthFailed (→ reauth + entities unavailable),
+    not be swallowed as success (which left HA serving stale state silently).
+    """
+    coordinator.devices["sw-1"] = make_fake_switch("sw-1")
+    mock_uhome_api.get_device_state.return_value = {
+        "payload": {"error": {"code": "INVALID_TOKEN", "message": "expired"}}
+    }
+    with pytest.raises(ConfigEntryAuthFailed):
+        await coordinator._async_update_data()
+
+
+async def test_async_update_data_other_error_payload_raises_update_failed(
+    coordinator, mock_uhome_api,
+):
+    coordinator.devices["sw-1"] = make_fake_switch("sw-1")
+    mock_uhome_api.get_device_state.return_value = {
+        "payload": {"error": {"code": "INTERNAL_ERROR", "message": "boom"}}
+    }
+    with pytest.raises(UpdateFailed):
+        await coordinator._async_update_data()
+
+
+async def test_async_update_data_success_payload_still_returns(coordinator, mock_uhome_api):
+    """Regression guard: a normal devices payload is unaffected by the error check."""
+    sw = make_fake_switch("sw-1")
+    sw.get_state_data = lambda: {"st.switch": {"switch": "on"}}
+    coordinator.devices["sw-1"] = sw
+    mock_uhome_api.get_device_state.return_value = {
+        "payload": {"devices": [
+            {"id": "sw-1", "states": [{"capability": "st.switch", "name": "switch", "value": "on"}]},
+        ]}
+    }
+    result = await coordinator._async_update_data()
+    assert "sw-1" in result
+
+
+async def test_discover_invalid_token_payload_raises_config_entry_auth_failed(
+    coordinator, mock_uhome_api,
+):
+    """A bad token during discovery must surface (→ reauth), not silently yield
+    zero devices — which on reload wipes every entity to unavailable."""
+    mock_uhome_api.discover_devices.return_value = {
+        "payload": {"error": {"code": "INVALID_TOKEN", "message": "expired"}}
+    }
+    with pytest.raises(ConfigEntryAuthFailed):
+        await coordinator.async_discover_devices()
