@@ -35,6 +35,31 @@ except ImportError:  # pragma: no cover — only hit if deps missing
     MockConfigEntry = None  # type: ignore
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _prime_pycares_shutdown_thread():
+    """Pre-spawn pycares' ``_run_safe_shutdown_loop`` daemon before per-test
+    thread snapshots, so the lingering-thread check never blames a test for it.
+
+    aiohttp's aiodns resolver lazily starts this shared daemon the first time
+    any test builds a clientsession (e.g. a real OAuth token refresh). Older
+    pytest-homeassistant-custom-component builds have no whitelist for it in
+    their cleanup check, so the *first* such test fails teardown — on the
+    Python 3.12 CI leg, pip backtracks to homeassistant 2025.1.4 /
+    pytest-HA-CC 0.13.205, which predates the whitelist. Starting the thread
+    once at session scope (this fixture runs before the function-scoped
+    ``verify_cleanup``) puts it in every test's ``threads_before`` baseline, so
+    it is never counted as leaked. The loop only blocks on a queue — no socket,
+    DNS, or event loop — so it is safe under pytest-socket.
+    """
+    try:
+        import pycares
+
+        pycares._shutdown_manager.start()
+    except (ImportError, AttributeError):  # pragma: no cover — pycares internals shifted
+        pass
+    yield
+
+
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations):
     """Automatically enable loading custom components in tests."""

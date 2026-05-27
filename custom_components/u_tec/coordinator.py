@@ -26,6 +26,34 @@ from utec_py.exceptions import ApiError, AuthenticationError
 _LOGGER = logging.getLogger(__name__)
 
 
+def _raise_for_error_payload(response, *, auth_only: bool = False) -> None:
+    """Surface U-Tec error envelopes returned with an HTTP 2xx status.
+
+    U-Tec replies HTTP 200 even on failure, carrying the error under
+    ``payload.error`` (e.g. ``{"code": "INVALID_TOKEN", "message": ...}``).
+    Left unraised, a revoked/expired token is swallowed and the coordinator
+    serves stale state indefinitely with no reauth prompt. ``INVALID_TOKEN``
+    becomes ``ConfigEntryAuthFailed`` (so HA triggers reauth and marks entities
+    unavailable); other error codes become ``UpdateFailed`` unless ``auth_only``
+    is set — discovery only needs to surface auth failures and lets other
+    errors fall through to its existing graceful handling.
+    """
+    if not isinstance(response, dict):
+        return
+    payload = response.get("payload")
+    if not isinstance(payload, dict):
+        return
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return
+    code = error.get("code")
+    message = error.get("message", "")
+    if code == "INVALID_TOKEN":
+        raise ConfigEntryAuthFailed(f"U-Tec rejected access token: {message}")
+    if not auth_only:
+        raise UpdateFailed(f"U-Tec API error {code}: {message}")
+
+
 class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Uhome data."""
 
@@ -87,6 +115,11 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         if not discovery_data or "payload" not in discovery_data:
             _LOGGER.error("Invalid discovery data received: %s", discovery_data)
             return
+
+        # A revoked token returns an INVALID_TOKEN envelope here; surface it so
+        # setup/reload fails into reauth instead of silently building 0 devices
+        # (which wipes every entity to unavailable on reload).
+        _raise_for_error_payload(discovery_data, auth_only=True)
 
         devices_data = discovery_data.get("payload", {}).get("devices", [])
         _LOGGER.debug("Found %s devices in discovery data", len(devices_data))
@@ -151,6 +184,11 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
             raise ConfigEntryAuthFailed(f"Credentials expired: {err}") from err
         except ApiError as err:
             raise UpdateFailed(f"Error communicating with API: {err}") from err
+
+        # U-Tec returns HTTP 200 with an error envelope (e.g. INVALID_TOKEN) that
+        # get_device_state does not raise on — surface it instead of treating an
+        # error response as an empty-but-successful poll.
+        _raise_for_error_payload(response)
 
         if response and "payload" in response:
             for device_data in response["payload"].get("devices", []):

@@ -74,11 +74,12 @@ async def test_async_oauth_create_entry_builds_entry(hass):
 async def test_async_oauth_create_entry_title_independent_of_flow_impl_name(hass):
     """Title uses a static integration name, not flow_impl.name.
 
-    LocalOAuth2Implementation.name returns the literal string "Configuration.yaml"
-    (hardcoded in HA core for yaml-configured impls). The deferred-credential
-    flow builds a LocalOAuth2Implementation directly, so using flow_impl.name
-    as the entry title would produce a confusing "Configuration.yaml" entry in
-    the UI. Title must be a static, recognisable integration name.
+    LocalOAuth2Implementation.name returns a generic HA-internal label whose
+    exact value is version-dependent (e.g. "Configuration.yaml" on older cores,
+    "Local application credentials" on current ones). The deferred-credential
+    flow builds a LocalOAuth2Implementation directly, so using flow_impl.name as
+    the entry title would surface that confusing label in the UI. Title must be a
+    static, recognisable integration name regardless of the HA-core string.
     """
     from homeassistant.helpers.config_entry_oauth2_flow import (
         LocalOAuth2Implementation,
@@ -92,8 +93,10 @@ async def test_async_oauth_create_entry_title_independent_of_flow_impl_name(hass
     handler.flow_impl = LocalOAuth2Implementation(
         hass, DOMAIN, "test-id", "test-secret", OAUTH2_AUTHORIZE, OAUTH2_TOKEN,
     )
-    # Sanity check: HA core really does return this literal string.
-    assert handler.flow_impl.name == "Configuration.yaml"
+    # flow_impl.name is a generic HA-internal label (version-dependent) and,
+    # crucially, NOT our integration name — so the static title asserted below
+    # cannot have been derived from it.
+    assert handler.flow_impl.name != "U-Tec"
 
     result = await handler.async_oauth_create_entry({"token": {"access_token": "t"}})
 

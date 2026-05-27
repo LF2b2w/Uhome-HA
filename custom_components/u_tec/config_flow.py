@@ -48,6 +48,7 @@ from .const import (
     OAUTH2_AUTHORIZE,
     OAUTH2_TOKEN,
 )
+from .oauth import UtecLocalOAuth2Implementation
 
 
 OPTIMISTIC_MODE_ALL = "all"
@@ -140,7 +141,10 @@ class UhomeOAuth2FlowHandler(
                 )
 
             self._pending_credential = ClientCredential(client_id, client_secret)
-            self.flow_impl = config_entry_oauth2_flow.LocalOAuth2Implementation(
+            # Unwrapping implementation: U-Tec's /token returns the OAuth fields
+            # nested under {"code","data"}, which HA's stock implementation can't
+            # parse. See oauth.py.
+            self.flow_impl = UtecLocalOAuth2Implementation(
                 self.hass,
                 DOMAIN,
                 client_id,
