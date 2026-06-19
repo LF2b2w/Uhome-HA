@@ -1,6 +1,6 @@
 """Data coordinator for Uhome integration."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 import logging
 
 from custom_components.u_tec.const import (
@@ -16,6 +16,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 from utec_py.api import UHomeApi
 from utec_py.devices.device import BaseDevice
 from utec_py.devices.light import Light
@@ -78,6 +79,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         self.added_sensor_entities = set()
         self.push_devices = []
         self.blacklisted_devices = []
+        self.last_push_received: datetime | None = None
         self._discovery_interval = timedelta(seconds=discovery_interval)
         self._cancel_discovery: callable | None = None
         _LOGGER.info(
@@ -203,6 +205,10 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def update_push_data(self, push_data):
         """Process push update from webhook."""
+        # Reaching here means the handler already passed Bearer-token auth, so a
+        # genuine push was delivered. Stamp before payload guards so even an empty
+        # keepalive counts as "push channel alive".
+        self.last_push_received = dt_util.utcnow()
 
         _LOGGER.debug("Processing push update: %s", push_data)
 
