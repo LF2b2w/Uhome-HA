@@ -1,14 +1,23 @@
 """Tests for UhomeLockEntity."""
 
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import async_capture_events
 from utec_py.exceptions import DeviceError
 
 from custom_components.u_tec.const import CONF_OPTIMISTIC_LOCKS, DOMAIN, SIGNAL_DEVICE_UPDATE
-from custom_components.u_tec.lock import UhomeLockEntity, async_setup_entry
+from custom_components.u_tec.lock import (
+    OPTIMISTIC_TIMEOUT,
+    PASSAGE_MODE,
+    UhomeLockEntity,
+    async_setup_entry,
+)
 from tests.common import make_config_entry, make_fake_lock, make_fake_switch
 
 
@@ -325,3 +334,253 @@ def test_handle_push_update_writes_ha_state(coord_with_lock):
     ent._handle_push_update({"some": "data"})
 
     ent.async_write_ha_state.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Optimistic state must not pin forever when the device never confirms
+# ---------------------------------------------------------------------------
+
+async def test_optimistic_clears_once_device_confirms(coord_with_lock, hass):
+    """The happy path: optimistic state is released when the device agrees."""
+    coord, lock = coord_with_lock
+    lock.is_locked = False
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = hass
+    ent.entity_id = "lock.fake_lock"
+    ent.async_write_ha_state = MagicMock()
+
+    await ent.async_lock()
+    assert ent.is_locked is True  # optimistic
+    assert ent.assumed_state is True
+
+    lock.is_locked = True  # device catches up
+    ent._handle_coordinator_update()
+
+    assert ent._optimistic_is_locked is None
+    assert ent.is_locked is True
+    assert ent.assumed_state is False
+
+
+async def test_optimistic_times_out_when_device_never_confirms(coord_with_lock, hass):
+    """Regression: an unconfirmed optimistic state must not pin forever.
+
+    A lever lock with auto-lock enabled re-locks itself immediately after an
+    unlock, so the device never reports "unlocked" and the entity previously
+    stayed wrong indefinitely.
+    """
+    coord, lock = coord_with_lock
+    lock.is_locked = True
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = hass
+    ent.entity_id = "lock.fake_lock"
+    ent.async_write_ha_state = MagicMock()
+
+    await ent.async_unlock()
+    assert ent.is_locked is False  # optimistic: we asked for unlocked
+
+    # Device never reports unlocked (auto-lock re-locked it).
+    ent._handle_coordinator_update()
+    assert ent._optimistic_is_locked is False  # still held, within grace
+
+    # Push the stamp beyond the timeout.
+    ent._optimistic_set_at = dt_util.utcnow() - (
+        OPTIMISTIC_TIMEOUT + timedelta(seconds=1)
+    )
+    ent._handle_coordinator_update()
+
+    assert ent._optimistic_is_locked is None
+    assert ent.is_locked is True  # deferred to the device
+    assert ent.assumed_state is False
+
+
+def test_missing_stamp_starts_the_clock_rather_than_clearing(coord_with_lock):
+    """An optimistic value with no timestamp must not be dropped on sight.
+
+    Clearing immediately would destroy the grace period that lets a slow bolt
+    finish moving. Start the clock instead, so the timeout still bounds it.
+    """
+    coord, lock = coord_with_lock
+    lock.is_locked = True
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = MagicMock()
+    ent.async_write_ha_state = MagicMock()
+    ent._optimistic_is_locked = False
+    ent._optimistic_set_at = None
+
+    ent._handle_coordinator_update()
+
+    assert ent._optimistic_is_locked is False, "optimistic value must be held"
+    assert ent._optimistic_set_at is not None, "clock must have been started"
+
+    # It must still time out from that stamp.
+    ent._optimistic_set_at = dt_util.utcnow() - (
+        OPTIMISTIC_TIMEOUT + timedelta(seconds=1)
+    )
+    ent._handle_coordinator_update()
+    assert ent._optimistic_is_locked is None
+
+
+# ---------------------------------------------------------------------------
+# Passage mode ignores lock commands, so optimism there is always wrong
+# ---------------------------------------------------------------------------
+
+def test_is_optimistic_false_in_passage_mode(coord_with_lock):
+    coord, lock = coord_with_lock
+    lock.lock_mode = PASSAGE_MODE
+    ent = UhomeLockEntity(coord, "lock-1")
+
+    assert ent._is_optimistic() is False
+
+
+def test_is_optimistic_true_in_normal_mode(coord_with_lock):
+    coord, lock = coord_with_lock
+    lock.lock_mode = "Normal"
+    ent = UhomeLockEntity(coord, "lock-1")
+
+    assert ent._is_optimistic() is True
+
+
+def test_is_optimistic_unaffected_by_unknown_lock_mode(coord_with_lock):
+    """utec_py returns None when lockMode is missing or unmapped; fail open."""
+    coord, lock = coord_with_lock
+    lock.lock_mode = None
+    ent = UhomeLockEntity(coord, "lock-1")
+
+    assert ent._is_optimistic() is True
+
+
+async def test_passage_mode_lock_does_not_set_optimistic(coord_with_lock, hass):
+    coord, lock = coord_with_lock
+    lock.lock_mode = PASSAGE_MODE
+    lock.is_locked = False
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = hass
+    ent.entity_id = "lock.fake_lock"
+    ent.async_write_ha_state = MagicMock()
+
+    await ent.async_lock()
+
+    lock.lock.assert_awaited_once()
+    assert ent._optimistic_is_locked is None
+    assert ent.is_locked is False  # the truth: passage mode did not lock
+
+
+def test_entering_passage_mode_drops_outstanding_optimism(coord_with_lock):
+    """Optimism from before the mode changed must not survive into Passage.
+
+    _is_optimistic() reports False in Passage, so a retained optimistic value
+    would make is_locked return an assumed value while assumed_state claims it
+    is confirmed.
+    """
+    coord, lock = coord_with_lock
+    lock.is_locked = True
+    lock.lock_mode = "Normal"
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = MagicMock()
+    ent.async_write_ha_state = MagicMock()
+    ent._optimistic_is_locked = False  # user asked for unlocked
+    ent._optimistic_set_at = dt_util.utcnow()
+
+    # Device flips to Passage before confirming.
+    lock.lock_mode = PASSAGE_MODE
+    ent._handle_coordinator_update()
+
+    assert ent._optimistic_is_locked is None
+    assert ent.is_locked is True  # device truth
+    assert ent.assumed_state is False
+    assert ent.is_locked == (not ent.assumed_state or ent.is_locked)
+
+
+# ---------------------------------------------------------------------------
+# Passage-mode lock commands must still notify listeners (HomeKit resync)
+# ---------------------------------------------------------------------------
+
+async def test_passage_mode_lock_resyncs_listeners(coord_with_lock, hass):
+    """A passage-mode lock command changes nothing, so nothing would notify
+    listeners. HA's HomeKit bridge only recomputes its target characteristic
+    on a state event, so without one the tile hangs on "Locking...".
+    Re-assert the unchanged state with force_update so an event still fires.
+    """
+    coord, lock = coord_with_lock
+    lock.lock_mode = PASSAGE_MODE
+    lock.is_locked = False
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = hass
+    ent.entity_id = "lock.fake_lock"
+
+    seen_force = []
+    ent.async_write_ha_state = MagicMock(
+        side_effect=lambda: seen_force.append(ent.force_update)
+    )
+
+    await ent.async_lock()
+
+    ent.async_write_ha_state.assert_called_once()
+    assert seen_force == [True], "state must be written with force_update set"
+    assert ent.force_update is False, "force_update must be reset after the write"
+
+
+async def test_normal_mode_lock_does_not_force_update(coord_with_lock, hass):
+    """Normal mode already produces a real state change; no forcing needed."""
+    coord, lock = coord_with_lock
+    lock.lock_mode = "Normal"
+    lock.is_locked = False
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = hass
+    ent.entity_id = "lock.fake_lock"
+
+    seen_force = []
+    ent.async_write_ha_state = MagicMock(
+        side_effect=lambda: seen_force.append(ent.force_update)
+    )
+
+    await ent.async_lock()
+
+    assert seen_force == [False]
+
+
+async def test_force_update_reset_even_if_write_raises(coord_with_lock, hass):
+    """force_update must not leak on if the write blows up."""
+    coord, lock = coord_with_lock
+    lock.lock_mode = PASSAGE_MODE
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = hass
+    ent.entity_id = "lock.fake_lock"
+    ent.async_write_ha_state = MagicMock(side_effect=RuntimeError("boom"))
+
+    with pytest.raises(RuntimeError):
+        await ent.async_lock()
+
+    assert ent.force_update is False
+
+
+async def test_passage_mode_lock_emits_real_state_event(coord_with_lock, hass):
+    """Integration-level: the forced write must reach the state machine.
+
+    The unit tests above mock async_write_ha_state, so they only prove the
+    force_update choreography. This one drives the real state machine and
+    asserts a state_changed event actually fires for an identical state --
+    the property the HomeKit resync depends on.
+    """
+    coord, lock = coord_with_lock
+    lock.lock_mode = PASSAGE_MODE
+    lock.is_locked = False
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = hass
+    ent.entity_id = "lock.fake_lock"
+
+    # Seed the machine with this entity's own state and attributes, so the
+    # write under test is byte-identical and would normally be suppressed.
+    ent.async_write_ha_state()
+    await hass.async_block_till_done()
+    before = hass.states.get("lock.fake_lock")
+    assert before is not None
+
+    events = async_capture_events(hass, EVENT_STATE_CHANGED)
+
+    await ent.async_lock()
+    await hass.async_block_till_done()
+
+    matching = [e for e in events if e.data["entity_id"] == "lock.fake_lock"]
+    assert matching, "an identical state must still emit state_changed when forced"
+    assert matching[0].data["new_state"].state == before.state
