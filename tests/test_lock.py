@@ -336,6 +336,58 @@ def test_handle_push_update_writes_ha_state(coord_with_lock):
     ent.async_write_ha_state.assert_called_once()
 
 
+def test_push_disagreement_clears_optimistic_immediately(coord_with_lock):
+    """A push that contradicts optimism drops it at once (no 30s wait).
+
+    The #58 case: user unlocked (optimistic=unlocked), auto-lock re-locked the
+    device, and the device pushes "locked". The coordinator has already applied
+    the push, so _device.is_locked is True.
+    """
+    coord, lock = coord_with_lock
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.async_write_ha_state = MagicMock()
+    ent._optimistic_is_locked = False  # user asked for unlocked
+    ent._optimistic_set_at = dt_util.utcnow()
+    lock.is_locked = True  # push already applied: device says locked
+
+    ent._handle_push_update({"some": "data"})
+
+    assert ent._optimistic_is_locked is None
+    assert ent._optimistic_set_at is None
+    assert ent.is_locked is True  # now reports the pushed truth
+    ent.async_write_ha_state.assert_called_once()
+
+
+def test_push_agreement_keeps_optimistic(coord_with_lock):
+    """A push that agrees with optimism leaves it for the confirm/timeout path."""
+    coord, lock = coord_with_lock
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.async_write_ha_state = MagicMock()
+    ent._optimistic_is_locked = True
+    stamp = dt_util.utcnow()
+    ent._optimistic_set_at = stamp
+    lock.is_locked = True  # push agrees
+
+    ent._handle_push_update({"some": "data"})
+
+    assert ent._optimistic_is_locked is True
+    assert ent._optimistic_set_at == stamp
+    ent.async_write_ha_state.assert_called_once()
+
+
+def test_push_with_no_outstanding_optimism_is_noop_but_writes(coord_with_lock):
+    """No optimism outstanding: push just writes, touches nothing."""
+    coord, lock = coord_with_lock
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.async_write_ha_state = MagicMock()
+    assert ent._optimistic_is_locked is None
+
+    ent._handle_push_update({"some": "data"})
+
+    assert ent._optimistic_is_locked is None
+    ent.async_write_ha_state.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # Optimistic state must not pin forever when the device never confirms
 # ---------------------------------------------------------------------------

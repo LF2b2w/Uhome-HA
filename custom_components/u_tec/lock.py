@@ -1,7 +1,7 @@
 """Support for Uhome locks."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, cast
 
 from homeassistant.components.lock import LockEntity
@@ -19,6 +19,7 @@ from utec_py.exceptions import DeviceError
 from .const import (
     CONF_OPTIMISTIC_LOCKS,
     DOMAIN,
+    OPTIMISTIC_TIMEOUT,
     SIGNAL_DEVICE_UPDATE,
     is_optimistic_enabled,
 )
@@ -26,18 +27,11 @@ from .coordinator import UhomeDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-# Bound how long an unconfirmed optimistic state may override the device's
-# reported state. Without this, a command the device never fulfils (for
-# example the lock auto-locking straight after an unlock) pins the entity
-# permanently. https://github.com/LF2b2w/Uhome-HA/issues/58
-#
-# NOTE: light.py and switch.py clear optimistic state on confirmation only,
-# exactly as this module used to, and so share the same unbounded behaviour.
-# They are deliberately left alone here: this fix is scoped to the platform
-# whose failure was reproduced on hardware, and the equivalent change to
-# lights and switches should be made by someone who can verify it against a
-# real device rather than by extrapolation.
-OPTIMISTIC_TIMEOUT = timedelta(seconds=30)
+# OPTIMISTIC_TIMEOUT lives in const.py because light.py and switch.py share
+# the same bounding. Only the lock path was reproduced on real hardware (an
+# ULTRALOQ Latch-5-F, whose non-disableable auto-lock guarantees the pin);
+# the light/switch fixes mirror this logic but are unverified on live
+# hardware. https://github.com/LF2b2w/Uhome-HA/issues/58
 
 # utec_py maps LockMode.PASSAGE -> "Passage" (devices/lock.py::lock_mode).
 # In this mode the device ignores lock/unlock commands outright.
@@ -107,6 +101,15 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         state event, so its tile sticks on "Locking..." indefinitely.
         Re-asserting the true state gives them an event to act on without
         publishing anything false.
+
+        This relies on Entity._async_write_ha_state reading force_update
+        synchronously during the write (it passes the value straight into the
+        state machine, which suppresses the state-changed event for an
+        identical state unless force_update is set). That is verified against
+        current HA internals, not a contractual API: if a future HA version
+        caches force_update at registration or defers the write, this toggle
+        would silently stop emitting the event. The finally-reset and
+        test_force_update_reset_even_if_write_raises guard the toggle itself.
         """
         self._force_next_write = True
         try:
@@ -258,5 +261,25 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
 
     @callback
     def _handle_push_update(self, push_data):
-        """Update device from push data."""
+        """Update device from push data, clearing optimistic state on disagreement.
+
+        By the time this fires, the coordinator has already applied the push to
+        the device (coordinator.update_push_data calls device.update_state_data
+        before dispatching), so self._device.is_locked reflects the pushed
+        state. A push is the most authoritative signal available -- the device
+        is proactively announcing a settled state -- so if it contradicts an
+        outstanding optimistic value we drop the optimism immediately rather
+        than waiting out OPTIMISTIC_TIMEOUT. This corrects the #58 auto-lock
+        case (device re-locks itself after an unlock) within seconds.
+
+        A push that agrees, or that does not change the lock state, leaves the
+        optimistic flag for the existing confirm/timeout path in
+        _handle_coordinator_update.
+        """
+        if (
+            self._optimistic_is_locked is not None
+            and self._optimistic_is_locked != self._device.is_locked
+        ):
+            self._optimistic_is_locked = None
+            self._optimistic_set_at = None
         self.async_write_ha_state()

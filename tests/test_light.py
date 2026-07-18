@@ -1,12 +1,16 @@
 """Tests for UhomeLightEntity — init and commands."""
 
+from datetime import timedelta
 from unittest.mock import MagicMock
 
 import pytest
 
+from homeassistant.util import dt as dt_util
+
 from custom_components.u_tec.const import (
     CONF_OPTIMISTIC_LIGHTS,
     DOMAIN,
+    OPTIMISTIC_TIMEOUT,
     SIGNAL_DEVICE_UPDATE,
 )
 from custom_components.u_tec.light import UhomeLightEntity
@@ -486,3 +490,93 @@ def test_handle_push_update_calls_write_ha_state(coord_with_light):
     ent._handle_push_update({"some": "data"})
 
     ent.async_write_ha_state.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Optimistic bounding + push handling (mirrors lock.py; unverified on live
+# hardware). https://github.com/LF2b2w/Uhome-HA/issues/58
+# ---------------------------------------------------------------------------
+
+def test_light_onoff_optimism_times_out(coord_with_light):
+    coord, light = coord_with_light
+    ent = UhomeLightEntity(coord, "light-1")
+    ent.hass = MagicMock()
+    ent.async_write_ha_state = MagicMock()
+    ent._optimistic_is_on = True  # asked for on
+    light.is_on = False  # device never turns on
+
+    ent._handle_coordinator_update()
+    assert ent._optimistic_is_on is True  # clock started, held
+
+    ent._optimistic_set_at = dt_util.utcnow() - (OPTIMISTIC_TIMEOUT + timedelta(seconds=1))
+    ent._handle_coordinator_update()
+    assert ent._optimistic_is_on is None
+    assert ent.is_on is False
+
+
+def test_light_brightness_optimism_times_out(coord_with_light):
+    coord, light = coord_with_light
+    ent = UhomeLightEntity(coord, "light-1")
+    ent.hass = MagicMock()
+    ent.async_write_ha_state = MagicMock()
+    ent._optimistic_is_on = True
+    light.is_on = True  # on/off confirms
+    ent._optimistic_brightness = 200
+    ent._pending_brightness_utec = 80
+    light.brightness = 40  # device never reaches 80
+    ent._optimistic_set_at = dt_util.utcnow() - (OPTIMISTIC_TIMEOUT + timedelta(seconds=1))
+
+    ent._handle_coordinator_update()
+    assert ent._optimistic_brightness is None
+    assert ent._pending_brightness_utec is None
+    assert ent._optimistic_set_at is None  # nothing outstanding -> clock cleared
+
+
+def test_light_brightness_confirms_normally(coord_with_light):
+    coord, light = coord_with_light
+    ent = UhomeLightEntity(coord, "light-1")
+    ent.hass = MagicMock()
+    ent.async_write_ha_state = MagicMock()
+    ent._optimistic_is_on = True
+    light.is_on = True
+    ent._optimistic_brightness = 200
+    ent._pending_brightness_utec = 80
+    light.brightness = 80  # device reached target
+    ent._optimistic_set_at = dt_util.utcnow()
+
+    ent._handle_coordinator_update()
+    assert ent._optimistic_brightness is None
+    assert ent._pending_brightness_utec is None
+
+
+def test_light_push_onoff_disagreement_clears(coord_with_light):
+    coord, light = coord_with_light
+    ent = UhomeLightEntity(coord, "light-1")
+    ent.async_write_ha_state = MagicMock()
+    ent._optimistic_is_on = True
+    ent._optimistic_set_at = dt_util.utcnow()
+    light.is_on = False  # push says off
+
+    ent._handle_push_update({"x": 1})
+    assert ent._optimistic_is_on is None
+    assert ent._optimistic_set_at is None
+    ent.async_write_ha_state.assert_called_once()
+
+
+def test_light_push_does_not_clear_brightness(coord_with_light):
+    """A push must not clear optimistic brightness (dimming-ramp values are
+    not authoritative); only on/off is cleared on disagreement."""
+    coord, light = coord_with_light
+    ent = UhomeLightEntity(coord, "light-1")
+    ent.async_write_ha_state = MagicMock()
+    ent._optimistic_is_on = True
+    light.is_on = True  # on/off agrees -> not cleared
+    ent._optimistic_brightness = 200
+    ent._pending_brightness_utec = 80
+    light.brightness = 40  # intermediate ramp value
+    ent._optimistic_set_at = dt_util.utcnow()
+
+    ent._handle_push_update({"x": 1})
+    assert ent._optimistic_brightness == 200  # brightness optimism preserved
+    assert ent._pending_brightness_utec == 80
+    assert ent._optimistic_set_at is not None  # still outstanding

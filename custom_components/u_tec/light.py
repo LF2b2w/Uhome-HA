@@ -1,6 +1,7 @@
 """Support for Uhome lights."""
 
 import logging
+from datetime import datetime
 from typing import Any, cast
 
 from homeassistant.components.light import (
@@ -17,6 +18,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 from homeassistant.util.color import value_to_brightness
 from utec_py.devices.light import Light as UhomeLight
 from utec_py.exceptions import DeviceError
@@ -24,6 +26,7 @@ from utec_py.exceptions import DeviceError
 from .const import (
     CONF_OPTIMISTIC_LIGHTS,
     DOMAIN,
+    OPTIMISTIC_TIMEOUT,
     SIGNAL_DEVICE_UPDATE,
     is_optimistic_enabled,
 )
@@ -31,6 +34,12 @@ from .coordinator import UhomeDataUpdateCoordinator
 
 # use module-level logger
 _LOGGER = logging.getLogger(__name__)
+
+# The optimistic timeout and on/off push-clear handling below mirrors lock.py,
+# which was verified on real hardware. The light path uses the same logic but
+# is unverified on a live U-Tec light. Brightness is intentionally left to the
+# confirm/timeout path (see _handle_push_update).
+# https://github.com/LF2b2w/Uhome-HA/issues/58
 
 # U-Tec reports brightness as 1-100, not 0-100. 
 BRIGHTNESS_SCALE = (1, 100)
@@ -61,6 +70,7 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
     _optimistic_is_on: bool | None = None
     _optimistic_brightness: int | None = None
     _pending_brightness_utec: int | None = None
+    _optimistic_set_at: datetime | None = None
 
     def __init__(self, coordinator: UhomeDataUpdateCoordinator, device_id: str) -> None:
         """Initialize the light."""
@@ -81,6 +91,7 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
         # The U-Tec brightness value (1-100) we last sent, used to detect
         # when the device has confirmed the change so we can clear optimistic state.
         self._pending_brightness_utec: int | None = None
+        self._optimistic_set_at: datetime | None = None
 
         # Set supported color modes based on device capabilities
         self._attr_supported_color_modes = set()
@@ -158,12 +169,21 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from coordinator.
 
-        For both on/off and brightness, only clear optimistic state once the
-        device confirms the new value — the first poll after a command often
-        still returns the old value.
+        For both on/off and brightness, we do not clear optimistic state on the
+        first poll (which often still returns the old value), but we also do not
+        wait forever: optimism is held for at most OPTIMISTIC_TIMEOUT, then
+        released so a command the device never fulfils cannot pin the entity.
+        A single shared clock covers both tracks of a turn_on call.
         """
+        timed_out = (
+            self._optimistic_set_at is not None
+            and dt_util.utcnow() - self._optimistic_set_at > OPTIMISTIC_TIMEOUT
+        )
+
         if self._optimistic_is_on is not None:
             if self._optimistic_is_on == self._device.is_on:
+                self._optimistic_is_on = None
+            elif timed_out:
                 self._optimistic_is_on = None
             # else: keep optimistic state until device catches up
 
@@ -173,9 +193,20 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
             if actual is not None and actual == pending:
                 self._optimistic_brightness = None
                 self._pending_brightness_utec = None
+            elif timed_out:
+                self._optimistic_brightness = None
+                self._pending_brightness_utec = None
             # else: keep optimistic brightness until device catches up
         else:
             self._optimistic_brightness = None
+
+        # Shared clock: clear it once nothing optimistic remains; start it if
+        # optimism is outstanding but was set without a timestamp (e.g. cache
+        # restore), so the timeout above can bound it on a later pass.
+        if self._optimistic_is_on is None and self._pending_brightness_utec is None:
+            self._optimistic_set_at = None
+        elif self._optimistic_set_at is None:
+            self._optimistic_set_at = dt_util.utcnow()
 
         super()._handle_coordinator_update()
 
@@ -215,6 +246,7 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
                 if "brightness" in turn_on_args:
                     self._optimistic_brightness = kwargs[ATTR_BRIGHTNESS]
                     self._pending_brightness_utec = turn_on_args["brightness"]
+                self._optimistic_set_at = dt_util.utcnow()
                 self.async_write_ha_state()
 
         except DeviceError as err:
@@ -228,6 +260,7 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
             await self._device.turn_off()
             if self._is_optimistic():
                 self._optimistic_is_on = False
+                self._optimistic_set_at = dt_util.utcnow()
                 self.async_write_ha_state()
         except DeviceError as err:
             _LOGGER.error(
@@ -249,5 +282,24 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
 
     @callback
     def _handle_push_update(self, push_data) -> None:
-        """Update device from push data."""
+        """Update device from push data, clearing on/off optimism on disagreement.
+
+        The coordinator applies the push before dispatching, so
+        self._device.is_on reflects the pushed state. A push contradicting an
+        outstanding on/off optimistic value is authoritative, so drop it now
+        instead of waiting out OPTIMISTIC_TIMEOUT.
+
+        Brightness is intentionally NOT cleared here: a push during a dimming
+        ramp can carry an intermediate value, so a brightness mismatch is not
+        reliably authoritative. It stays on the confirm/timeout path.
+        """
+        if (
+            self._optimistic_is_on is not None
+            and self._optimistic_is_on != self._device.is_on
+        ):
+            self._optimistic_is_on = None
+
+        if self._optimistic_is_on is None and self._pending_brightness_utec is None:
+            self._optimistic_set_at = None
+
         self.async_write_ha_state()
