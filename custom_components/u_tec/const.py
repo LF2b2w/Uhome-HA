@@ -1,14 +1,26 @@
 """Constants for the Uhome integration."""
 
+from datetime import timedelta
+
 from .optimistic import (
     CONF_OPTIMISTIC_LIGHTS,
     CONF_OPTIMISTIC_SWITCHES,
     CONF_OPTIMISTIC_LOCKS,
     DEFAULT_OPTIMISTIC,
     is_optimistic_enabled,
+    push_asserts_state,
 )
 
 DOMAIN = "u_tec"
+
+# Bound how long an unconfirmed optimistic state may override the device's
+# reported state, shared by lock/light/switch. Without it, a command the
+# device never fulfils (a lock auto-locking after an unlock, a switch command
+# that silently fails) pins the entity permanently. ~3 polls at the default
+# 10s scan interval preserves the grace period while the device physically
+# settles, then defers to the device.
+# https://github.com/LF2b2w/Uhome-HA/issues/58
+OPTIMISTIC_TIMEOUT = timedelta(seconds=30)
 
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_DISCOVERY_INTERVAL = "discovery_interval"

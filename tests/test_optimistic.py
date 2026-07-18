@@ -1,12 +1,33 @@
 """Unit tests for the optimistic-update resolver."""
 
+import pytest
+
 from custom_components.u_tec.optimistic import (
     CONF_OPTIMISTIC_LIGHTS,
     CONF_OPTIMISTIC_LOCKS,
     CONF_OPTIMISTIC_SWITCHES,
     DEFAULT_OPTIMISTIC,
     is_optimistic_enabled,
+    push_asserts_state,
 )
+
+
+@pytest.mark.parametrize(
+    "push_data,expected",
+    [
+        ({"st.lock": {"lockState": "Locked"}}, True),  # capability + attr present
+        ({"st.lock": {"lockState": "Unlocked"}}, True),  # value doesn't matter
+        ({"st.doorSensor": {"doorState": "open"}}, False),  # different capability
+        ({"st.lock": {"battery": 3}}, False),  # capability present, wrong attr
+        ({"st.lock": {}}, False),  # capability present, no attrs
+        ({}, False),  # empty
+        (None, False),  # not a dict
+        ("garbage", False),  # not a dict
+        ({"st.lock": "notadict"}, False),  # capability value isn't a dict
+    ],
+)
+def test_push_asserts_state(push_data, expected):
+    assert push_asserts_state(push_data, "st.lock", "lockState") is expected
 
 
 def test_default_constant_is_true():

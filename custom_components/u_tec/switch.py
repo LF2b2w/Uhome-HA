@@ -1,5 +1,6 @@
 """Support for Uhome switches."""
 
+from datetime import datetime
 from typing import Any, cast
 import logging
 
@@ -11,19 +12,26 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 from utec_py.devices.switch import Switch as UhomeSwitch
 from utec_py.exceptions import DeviceError
 
 from .const import (
     CONF_OPTIMISTIC_SWITCHES,
     DOMAIN,
+    OPTIMISTIC_TIMEOUT,
     SIGNAL_DEVICE_UPDATE,
     is_optimistic_enabled,
+    push_asserts_state,
 )
 from .coordinator import UhomeDataUpdateCoordinator
 
 # define our own logger so we don't import the private internal logger, and instead use a module logger
 _LOGGER = logging.getLogger(__name__)
+
+# The optimistic timeout and push-clear handling below mirrors lock.py, which
+# was verified on real hardware. The switch path uses the same logic but is
+# unverified on a live U-Tec switch. https://github.com/LF2b2w/Uhome-HA/issues/58
 
 
 async def async_setup_entry(
@@ -47,6 +55,7 @@ class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
     """Representation of a Uhome switch."""
 
     _optimistic_is_on: bool | None = None
+    _optimistic_set_at: datetime | None = None
 
     def __init__(self, coordinator: UhomeDataUpdateCoordinator, device_id: str) -> None:
         """Initialize the switch."""
@@ -63,6 +72,7 @@ class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
         )
         self._attr_has_entity_name = True
         self._optimistic_is_on: bool | None = None
+        self._optimistic_set_at: datetime | None = None
 
     def _is_optimistic(self) -> bool:
         """Return True if optimistic updates apply to this device."""
@@ -90,11 +100,29 @@ class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
         return self._is_optimistic() and self._optimistic_is_on is not None
 
     def _handle_coordinator_update(self) -> None:
-        """Handle updated data from coordinator, clearing optimistic state."""
+        """Handle updated data from coordinator, clearing optimistic state.
+
+        Optimism is held while the device catches up, but only for
+        OPTIMISTIC_TIMEOUT -- otherwise a command the device never fulfils
+        would pin the entity indefinitely. See lock.py for the reproduced case.
+        """
         if self._optimistic_is_on is not None:
             if self._optimistic_is_on == self._device.is_on:
                 self._optimistic_is_on = None
-            # else: keep optimistic state until device catches up
+                self._optimistic_set_at = None
+            elif self._optimistic_set_at is None:
+                # Optimistic value with no timestamp: start the clock rather
+                # than clearing, so the grace period is preserved.
+                self._optimistic_set_at = dt_util.utcnow()
+            elif dt_util.utcnow() - self._optimistic_set_at > OPTIMISTIC_TIMEOUT:
+                _LOGGER.debug(
+                    "Optimistic state for %s unconfirmed after %s; trusting device",
+                    self._device.device_id,
+                    OPTIMISTIC_TIMEOUT,
+                )
+                self._optimistic_is_on = None
+                self._optimistic_set_at = None
+            # else: still within the grace period
         super()._handle_coordinator_update()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
@@ -104,6 +132,7 @@ class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
             await self._device.turn_on()
             if self._is_optimistic():
                 self._optimistic_is_on = True
+                self._optimistic_set_at = dt_util.utcnow()
                 self.async_write_ha_state()
         except DeviceError as err:
             _LOGGER.error(
@@ -118,6 +147,7 @@ class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
             await self._device.turn_off()
             if self._is_optimistic():
                 self._optimistic_is_on = False
+                self._optimistic_set_at = dt_util.utcnow()
                 self.async_write_ha_state()
         except DeviceError as err:
             _LOGGER.error(
@@ -139,5 +169,21 @@ class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
 
     @callback
     def _handle_push_update(self, push_data):
-        """Update device from push data."""
+        """Update device from push data, clearing optimistic state on disagreement.
+
+        The coordinator applies the push to the device before dispatching, so
+        self._device.is_on reflects the pushed state. We only act when the push
+        actually carried switch state: pushes are full-state replaces and
+        Switch.is_on falls back to False when the switch capability is absent,
+        so a partial push must not be read as a spurious "off". A contradicting
+        push then drops the optimism at once rather than waiting out
+        OPTIMISTIC_TIMEOUT.
+        """
+        if (
+            self._optimistic_is_on is not None
+            and push_asserts_state(push_data, "st.switch", "switch")
+            and self._optimistic_is_on != self._device.is_on
+        ):
+            self._optimistic_is_on = None
+            self._optimistic_set_at = None
         self.async_write_ha_state()
