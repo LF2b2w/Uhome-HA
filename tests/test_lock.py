@@ -11,9 +11,13 @@ from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_capture_events
 from utec_py.exceptions import DeviceError
 
-from custom_components.u_tec.const import CONF_OPTIMISTIC_LOCKS, DOMAIN, SIGNAL_DEVICE_UPDATE
-from custom_components.u_tec.lock import (
+from custom_components.u_tec.const import (
+    CONF_OPTIMISTIC_LOCKS,
+    DOMAIN,
     OPTIMISTIC_TIMEOUT,
+    SIGNAL_DEVICE_UPDATE,
+)
+from custom_components.u_tec.lock import (
     PASSAGE_MODE,
     UhomeLockEntity,
     async_setup_entry,
@@ -336,6 +340,12 @@ def test_handle_push_update_writes_ha_state(coord_with_lock):
     ent.async_write_ha_state.assert_called_once()
 
 
+# A push payload carrying real lock state, as device.get_state_data() produces.
+_PUSH_WITH_LOCK = {"st.lock": {"lockState": "Locked"}}
+# A partial push that does not carry lock state (e.g. a door-sensor event).
+_PUSH_NO_LOCK = {"st.doorSensor": {"doorState": "open"}}
+
+
 def test_push_disagreement_clears_optimistic_immediately(coord_with_lock):
     """A push that contradicts optimism drops it at once (no 30s wait).
 
@@ -350,11 +360,33 @@ def test_push_disagreement_clears_optimistic_immediately(coord_with_lock):
     ent._optimistic_set_at = dt_util.utcnow()
     lock.is_locked = True  # push already applied: device says locked
 
-    ent._handle_push_update({"some": "data"})
+    ent._handle_push_update(_PUSH_WITH_LOCK)
 
     assert ent._optimistic_is_locked is None
     assert ent._optimistic_set_at is None
     assert ent.is_locked is True  # now reports the pushed truth
+    ent.async_write_ha_state.assert_called_once()
+
+
+def test_partial_push_without_lock_state_does_not_clear(coord_with_lock):
+    """A push that omits lock state must NOT clear optimism.
+
+    Pushes are full-state replaces and Lock.is_locked falls back to False when
+    the lock capability is absent, so a door-sensor/battery push would read as a
+    spurious "unlocked". Optimism must survive it for the confirm/timeout path.
+    """
+    coord, lock = coord_with_lock
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.async_write_ha_state = MagicMock()
+    ent._optimistic_is_locked = True  # user asked for locked
+    stamp = dt_util.utcnow()
+    ent._optimistic_set_at = stamp
+    lock.is_locked = False  # fallback False: capability was wiped by the push
+
+    ent._handle_push_update(_PUSH_NO_LOCK)
+
+    assert ent._optimistic_is_locked is True  # preserved
+    assert ent._optimistic_set_at == stamp
     ent.async_write_ha_state.assert_called_once()
 
 
@@ -368,7 +400,7 @@ def test_push_agreement_keeps_optimistic(coord_with_lock):
     ent._optimistic_set_at = stamp
     lock.is_locked = True  # push agrees
 
-    ent._handle_push_update({"some": "data"})
+    ent._handle_push_update(_PUSH_WITH_LOCK)
 
     assert ent._optimistic_is_locked is True
     assert ent._optimistic_set_at == stamp
@@ -382,10 +414,52 @@ def test_push_with_no_outstanding_optimism_is_noop_but_writes(coord_with_lock):
     ent.async_write_ha_state = MagicMock()
     assert ent._optimistic_is_locked is None
 
-    ent._handle_push_update({"some": "data"})
+    ent._handle_push_update(_PUSH_WITH_LOCK)
 
     assert ent._optimistic_is_locked is None
     ent.async_write_ha_state.assert_called_once()
+
+
+async def test_async_lock_stamps_optimistic_set_at(coord_with_lock, hass):
+    """A command must record when optimism started, so the timeout can bound it."""
+    coord, lock = coord_with_lock
+    lock.is_locked = False
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = hass
+    ent.entity_id = "lock.fake_lock"
+    ent.async_write_ha_state = MagicMock()
+
+    await ent.async_lock()
+    assert ent._optimistic_set_at is not None
+
+
+async def test_async_unlock_stamps_optimistic_set_at(coord_with_lock, hass):
+    coord, lock = coord_with_lock
+    lock.is_locked = True
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = hass
+    ent.entity_id = "lock.fake_lock"
+    ent.async_write_ha_state = MagicMock()
+
+    await ent.async_unlock()
+    assert ent._optimistic_set_at is not None
+
+
+def test_confirm_clears_stamp_so_next_command_gets_fresh_clock(coord_with_lock):
+    """On confirmation the stamp must clear, or a later un-stamped optimistic
+    value would inherit a stale start time and time out prematurely."""
+    coord, lock = coord_with_lock
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = MagicMock()
+    ent.async_write_ha_state = MagicMock()
+    ent._optimistic_is_locked = True
+    ent._optimistic_set_at = dt_util.utcnow()
+    lock.is_locked = True  # device confirms
+
+    ent._handle_coordinator_update()
+
+    assert ent._optimistic_is_locked is None
+    assert ent._optimistic_set_at is None
 
 
 # ---------------------------------------------------------------------------
@@ -540,7 +614,6 @@ def test_entering_passage_mode_drops_outstanding_optimism(coord_with_lock):
     assert ent._optimistic_is_locked is None
     assert ent.is_locked is True  # device truth
     assert ent.assumed_state is False
-    assert ent.is_locked == (not ent.assumed_state or ent.is_locked)
 
 
 # ---------------------------------------------------------------------------

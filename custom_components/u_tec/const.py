@@ -8,6 +8,7 @@ from .optimistic import (
     CONF_OPTIMISTIC_LOCKS,
     DEFAULT_OPTIMISTIC,
     is_optimistic_enabled,
+    push_asserts_state,
 )
 
 DOMAIN = "u_tec"

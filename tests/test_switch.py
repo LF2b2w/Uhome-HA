@@ -321,6 +321,11 @@ async def test_async_added_to_hass_registers_dispatcher(coord_with_switch, hass)
 # (mirrors lock.py; see https://github.com/LF2b2w/Uhome-HA/issues/58)
 # ---------------------------------------------------------------------------
 
+# A push payload carrying real switch state, and one that omits it.
+_PUSH_WITH_SWITCH = {"st.switch": {"switch": "on"}}
+_PUSH_NO_SWITCH = {"st.batteryLevel": {"level": 3}}
+
+
 def test_switch_optimistic_times_out_when_never_confirmed(coord_with_switch):
     coord, sw = coord_with_switch
     ent = UhomeSwitchEntity(coord, "sw-1")
@@ -330,7 +335,8 @@ def test_switch_optimistic_times_out_when_never_confirmed(coord_with_switch):
     sw.is_on = False  # device never turns on
 
     ent._handle_coordinator_update()
-    assert ent._optimistic_is_on is True  # held (clock just started)
+    assert ent._optimistic_is_on is True  # held
+    assert ent._optimistic_set_at is not None  # clock was started
 
     ent._optimistic_set_at = dt_util.utcnow() - (OPTIMISTIC_TIMEOUT + timedelta(seconds=1))
     ent._handle_coordinator_update()
@@ -359,11 +365,26 @@ def test_switch_push_disagreement_clears(coord_with_switch):
     ent._optimistic_set_at = dt_util.utcnow()
     sw.is_on = False  # push applied: device says off
 
-    ent._handle_push_update({"x": 1})
+    ent._handle_push_update(_PUSH_WITH_SWITCH)
     assert ent._optimistic_is_on is None
     assert ent._optimistic_set_at is None
     assert ent.is_on is False
     ent.async_write_ha_state.assert_called_once()
+
+
+def test_switch_partial_push_without_switch_state_does_not_clear(coord_with_switch):
+    """A push omitting switch state must not clear optimism (fallback-False)."""
+    coord, sw = coord_with_switch
+    ent = UhomeSwitchEntity(coord, "sw-1")
+    ent.async_write_ha_state = MagicMock()
+    ent._optimistic_is_on = True
+    stamp = dt_util.utcnow()
+    ent._optimistic_set_at = stamp
+    sw.is_on = False  # fallback False from the wiped capability
+
+    ent._handle_push_update(_PUSH_NO_SWITCH)
+    assert ent._optimistic_is_on is True  # preserved
+    assert ent._optimistic_set_at == stamp
 
 
 def test_switch_push_agreement_keeps(coord_with_switch):
@@ -371,8 +392,42 @@ def test_switch_push_agreement_keeps(coord_with_switch):
     ent = UhomeSwitchEntity(coord, "sw-1")
     ent.async_write_ha_state = MagicMock()
     ent._optimistic_is_on = True
-    ent._optimistic_set_at = dt_util.utcnow()
+    stamp = dt_util.utcnow()
+    ent._optimistic_set_at = stamp
     sw.is_on = True  # push agrees
 
-    ent._handle_push_update({"x": 1})
+    ent._handle_push_update(_PUSH_WITH_SWITCH)
     assert ent._optimistic_is_on is True
+    assert ent._optimistic_set_at == stamp  # stamp preserved
+
+
+def test_switch_missing_stamp_starts_clock(coord_with_switch):
+    """Optimism set without a stamp must start the clock, not clear on sight."""
+    coord, sw = coord_with_switch
+    ent = UhomeSwitchEntity(coord, "sw-1")
+    ent.hass = MagicMock()
+    ent.async_write_ha_state = MagicMock()
+    ent._optimistic_is_on = True
+    ent._optimistic_set_at = None
+    sw.is_on = False  # device disagrees
+
+    ent._handle_coordinator_update()
+    assert ent._optimistic_is_on is True  # held
+    assert ent._optimistic_set_at is not None  # clock started
+
+
+async def test_switch_commands_stamp_optimistic_set_at(coord_with_switch, hass):
+    coord, sw = coord_with_switch
+    ent = UhomeSwitchEntity(coord, "sw-1")
+    ent.hass = hass
+    ent.entity_id = "switch.fake"
+    ent.async_write_ha_state = MagicMock()
+
+    sw.is_on = False
+    await ent.async_turn_on()
+    assert ent._optimistic_set_at is not None
+
+    ent._optimistic_set_at = None
+    sw.is_on = True
+    await ent.async_turn_off()
+    assert ent._optimistic_set_at is not None

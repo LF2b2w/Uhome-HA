@@ -22,6 +22,7 @@ from .const import (
     OPTIMISTIC_TIMEOUT,
     SIGNAL_DEVICE_UPDATE,
     is_optimistic_enabled,
+    push_asserts_state,
 )
 from .coordinator import UhomeDataUpdateCoordinator
 
@@ -171,12 +172,16 @@ class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
         """Update device from push data, clearing optimistic state on disagreement.
 
         The coordinator applies the push to the device before dispatching, so
-        self._device.is_on reflects the pushed state. A push that contradicts
-        an outstanding optimistic value is authoritative, so drop the optimism
-        at once rather than waiting out OPTIMISTIC_TIMEOUT.
+        self._device.is_on reflects the pushed state. We only act when the push
+        actually carried switch state: pushes are full-state replaces and
+        Switch.is_on falls back to False when the switch capability is absent,
+        so a partial push must not be read as a spurious "off". A contradicting
+        push then drops the optimism at once rather than waiting out
+        OPTIMISTIC_TIMEOUT.
         """
         if (
             self._optimistic_is_on is not None
+            and push_asserts_state(push_data, "st.switch", "switch")
             and self._optimistic_is_on != self._device.is_on
         ):
             self._optimistic_is_on = None

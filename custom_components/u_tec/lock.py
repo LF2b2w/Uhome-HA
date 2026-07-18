@@ -22,6 +22,7 @@ from .const import (
     OPTIMISTIC_TIMEOUT,
     SIGNAL_DEVICE_UPDATE,
     is_optimistic_enabled,
+    push_asserts_state,
 )
 from .coordinator import UhomeDataUpdateCoordinator
 
@@ -266,18 +267,21 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         By the time this fires, the coordinator has already applied the push to
         the device (coordinator.update_push_data calls device.update_state_data
         before dispatching), so self._device.is_locked reflects the pushed
-        state. A push is the most authoritative signal available -- the device
-        is proactively announcing a settled state -- so if it contradicts an
-        outstanding optimistic value we drop the optimism immediately rather
-        than waiting out OPTIMISTIC_TIMEOUT. This corrects the #58 auto-lock
-        case (device re-locks itself after an unlock) within seconds.
+        state. A push that authoritatively contradicts an outstanding optimistic
+        value drops the optimism immediately rather than waiting out
+        OPTIMISTIC_TIMEOUT -- this corrects the #58 auto-lock case (device
+        re-locks itself after an unlock) within seconds.
 
-        A push that agrees, or that does not change the lock state, leaves the
-        optimistic flag for the existing confirm/timeout path in
-        _handle_coordinator_update.
+        We only act when the push actually carried lock state: pushes are
+        full-state replaces, and Lock.is_locked falls back to False when the
+        lock capability is absent, so a partial push (e.g. a door-sensor event)
+        would otherwise read as a spurious "unlocked" and clear optimism
+        mid-command. A push that agrees, omits lock state, or leaves it
+        unchanged stays on the confirm/timeout path.
         """
         if (
             self._optimistic_is_locked is not None
+            and push_asserts_state(push_data, "st.lock", "lockState")
             and self._optimistic_is_locked != self._device.is_locked
         ):
             self._optimistic_is_locked = None

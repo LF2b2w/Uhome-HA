@@ -29,6 +29,7 @@ from .const import (
     OPTIMISTIC_TIMEOUT,
     SIGNAL_DEVICE_UPDATE,
     is_optimistic_enabled,
+    push_asserts_state,
 )
 from .coordinator import UhomeDataUpdateCoordinator
 
@@ -180,6 +181,16 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
             and dt_util.utcnow() - self._optimistic_set_at > OPTIMISTIC_TIMEOUT
         )
 
+        if timed_out and (
+            self._optimistic_is_on is not None
+            or self._pending_brightness_utec is not None
+        ):
+            _LOGGER.debug(
+                "Optimistic state for %s unconfirmed after %s; trusting device",
+                self._device.device_id,
+                OPTIMISTIC_TIMEOUT,
+            )
+
         if self._optimistic_is_on is not None:
             if self._optimistic_is_on == self._device.is_on:
                 self._optimistic_is_on = None
@@ -285,9 +296,11 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
         """Update device from push data, clearing on/off optimism on disagreement.
 
         The coordinator applies the push before dispatching, so
-        self._device.is_on reflects the pushed state. A push contradicting an
-        outstanding on/off optimistic value is authoritative, so drop it now
-        instead of waiting out OPTIMISTIC_TIMEOUT.
+        self._device.is_on reflects the pushed state. We only act when the push
+        actually carried switch state (pushes are full-state replaces and
+        Light.is_on falls back to False when the switch capability is absent, so
+        a partial push must not read as a spurious "off"). A contradicting push
+        then drops on/off optimism now instead of waiting out OPTIMISTIC_TIMEOUT.
 
         Brightness is intentionally NOT cleared here: a push during a dimming
         ramp can carry an intermediate value, so a brightness mismatch is not
@@ -295,6 +308,7 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
         """
         if (
             self._optimistic_is_on is not None
+            and push_asserts_state(push_data, "st.switch", "switch")
             and self._optimistic_is_on != self._device.is_on
         ):
             self._optimistic_is_on = None
