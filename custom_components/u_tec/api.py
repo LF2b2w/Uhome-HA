@@ -61,33 +61,44 @@ class AsyncPushUpdateHandler:
         """Generate a fresh random secret token for push validation."""
         return secrets.token_urlsafe(32)
 
+    async def _try_get_cloudhook_url(self) -> str | None:
+        """Return a Nabu Casa cloudhook URL if Cloud is active, else None.
+
+        Cloud is imported lazily so loading this module does not pull in the
+        full Cloud → Alexa → camera dependency chain. Unit tests patch this
+        method instead of importing homeassistant.components.cloud.
+        """
+        from homeassistant.components import cloud
+
+        if not cloud.async_active_subscription(self.hass):
+            return None
+
+        try:
+            webhook_url = await cloud.async_get_or_create_cloudhook(
+                self.hass, self.webhook_id
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning(
+                "Cloudhook creation failed, falling back to external URL: %s",
+                err,
+            )
+            return None
+
+        if webhook_url:
+            _LOGGER.debug("Using Nabu Casa cloudhook: %s", webhook_url)
+        return webhook_url or None
+
     async def _resolve_webhook_url(self) -> str | None:
         """Resolve an externally-reachable webhook URL.
 
         Prefer a Nabu Casa cloudhook when Home Assistant Cloud is active.
         Otherwise fall back through network.get_url strategies.
-
-        Cloud is imported lazily so loading this module does not pull in the
-        full Cloud → Alexa → camera dependency chain (needed for unit tests
-        and lighter HA startup).
         """
         # 1. Prefer a real cloudhook when Nabu Casa is active.
-        from homeassistant.components import cloud
-
-        if cloud.async_active_subscription(self.hass):
-            try:
-                webhook_url = await cloud.async_get_or_create_cloudhook(
-                    self.hass, self.webhook_id
-                )
-                if webhook_url:
-                    self._used_cloudhook = True
-                    _LOGGER.debug("Using Nabu Casa cloudhook: %s", webhook_url)
-                    return webhook_url
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.warning(
-                    "Cloudhook creation failed, falling back to external URL: %s",
-                    err,
-                )
+        cloudhook_url = await self._try_get_cloudhook_url()
+        if cloudhook_url:
+            self._used_cloudhook = True
+            return cloudhook_url
 
         self._used_cloudhook = False
 

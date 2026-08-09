@@ -9,14 +9,15 @@ from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.u_tec.api import AsyncPushUpdateHandler
 
-# Cloud is lazy-imported inside _resolve_webhook_url, so patch the real module.
-_CLOUD_ACTIVE = "homeassistant.components.cloud.async_active_subscription"
-_CLOUD_HOOK = "homeassistant.components.cloud.async_get_or_create_cloudhook"
+# Patch the helper so tests never import homeassistant.components.cloud.
+_TRY_CLOUDHOOK = (
+    "custom_components.u_tec.api.AsyncPushUpdateHandler._try_get_cloudhook_url"
+)
 
 
 def _patch_no_cloud():
     """Disable the cloudhook path so tests exercise network.get_url fallbacks."""
-    return patch(_CLOUD_ACTIVE, return_value=False)
+    return patch(_TRY_CLOUDHOOK, new_callable=AsyncMock, return_value=None)
 
 
 async def test_register_succeeds_with_external_url(hass, mock_uhome_api):
@@ -43,14 +44,12 @@ async def test_register_succeeds_with_external_url(hass, mock_uhome_api):
 
 
 async def test_register_prefers_cloudhook_when_cloud_active(hass, mock_uhome_api):
-    """Nabu Casa active → use cloudhook, skip network.get_url."""
+    """Cloudhook available → use it, skip network.get_url."""
     h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
     cloudhook_url = "https://hooks.nabu.casa/abc123"
 
-    with patch(_CLOUD_ACTIVE, return_value=True), patch(
-        _CLOUD_HOOK,
-        new_callable=AsyncMock,
-        return_value=cloudhook_url,
+    with patch(
+        _TRY_CLOUDHOOK, new_callable=AsyncMock, return_value=cloudhook_url
     ) as mock_cloudhook, patch(
         "custom_components.u_tec.api.network.get_url",
     ) as mock_get_url, patch(
@@ -63,7 +62,7 @@ async def test_register_prefers_cloudhook_when_cloud_active(hass, mock_uhome_api
         result = await h.async_register_webhook(auth_data=MagicMock())
 
     assert result is True
-    mock_cloudhook.assert_awaited_once_with(hass, h.webhook_id)
+    mock_cloudhook.assert_awaited_once()
     mock_get_url.assert_not_called()
     mock_uhome_api.set_push_status.assert_awaited_once()
     assert mock_uhome_api.set_push_status.await_args.args[0] == cloudhook_url
@@ -71,15 +70,11 @@ async def test_register_prefers_cloudhook_when_cloud_active(hass, mock_uhome_api
     assert h.webhook_url == cloudhook_url
 
 
-async def test_register_falls_back_when_cloudhook_fails(hass, mock_uhome_api):
-    """Cloudhook creation error → fall back to network.get_url."""
+async def test_register_falls_back_when_cloudhook_unavailable(hass, mock_uhome_api):
+    """No cloudhook → fall back to network.get_url."""
     h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
 
-    with patch(_CLOUD_ACTIVE, return_value=True), patch(
-        _CLOUD_HOOK,
-        new_callable=AsyncMock,
-        side_effect=RuntimeError("cloud unavailable"),
-    ), patch(
+    with _patch_no_cloud(), patch(
         "custom_components.u_tec.api.network.get_url",
         return_value="https://ha.example.com",
     ), patch(
@@ -113,7 +108,7 @@ async def test_register_fails_when_no_url_available(hass, mock_uhome_api):
 
 
 async def test_register_falls_back_through_url_strategies(hass, mock_uhome_api):
-    """First strategy fails, second succeeds — cloud fallback path."""
+    """First strategy fails, second succeeds — network fallback path."""
     h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
 
     call_count = [0]
