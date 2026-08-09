@@ -8,11 +8,45 @@ from custom_components.u_tec.api import AsyncPushUpdateHandler
 from custom_components.u_tec.const import DOMAIN
 
 
-def _make_request(method: str = "POST", *, body: bytes = b"{}", headers: dict | None = None):
+def _make_request(
+    method: str = "POST",
+    *,
+    body: bytes = b"{}",
+    headers: dict | None = None,
+    json_data: dict | None = None,
+    support_read: bool = True,
+    support_json: bool = True,
+):
+    """Build a request mock supporting read() and/or json().
+
+    Cloudhooks use a MockRequest with json() but no read(). Local deliveries
+    use a full aiohttp Request with both.
+    """
     req = MagicMock()
     req.method = method
-    req.read = AsyncMock(return_value=body)
     req.headers = headers or {}
+
+    if support_read:
+        req.read = AsyncMock(return_value=body)
+    else:
+        # Simulate cloud MockRequest — no read attribute at all.
+        del req.read
+
+    if support_json:
+        if json_data is not None:
+            req.json = AsyncMock(return_value=json_data)
+        else:
+            import json as _json
+
+            try:
+                parsed = _json.loads(body)
+            except Exception:  # noqa: BLE001
+                req.json = AsyncMock(side_effect=ValueError("bad json"))
+            else:
+                req.json = AsyncMock(return_value=parsed)
+    else:
+        del req.json
+
     return req
 
 
@@ -35,7 +69,7 @@ async def test_rejects_non_post_method(webhook_handler, hass):
 
 async def test_rejects_invalid_json_body(webhook_handler, hass):
     h, _ = webhook_handler
-    req = _make_request(body=b"not-json")
+    req = _make_request(body=b"not-json", support_json=False)
     resp = await h._handle_webhook(hass, "wh-id", req)
     assert resp.status == 400
 
@@ -61,6 +95,19 @@ async def test_accepts_correct_bearer_token(webhook_handler, hass):
     h, coord = webhook_handler
     req = _make_request(
         body=b'{"payload": {"devices": []}}',
+        headers={"Authorization": "Bearer correct-secret"},
+    )
+    resp = await h._handle_webhook(hass, "wh-id", req)
+    assert resp.status == 200
+    coord.update_push_data.assert_awaited_once()
+
+
+async def test_accepts_cloudhook_style_request_without_read(webhook_handler, hass):
+    """Nabu Casa cloudhooks deliver MockRequest with json() but no read()."""
+    h, coord = webhook_handler
+    req = _make_request(
+        support_read=False,
+        json_data={"payload": {"devices": []}},
         headers={"Authorization": "Bearer correct-secret"},
     )
     resp = await h._handle_webhook(hass, "wh-id", req)

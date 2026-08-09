@@ -206,6 +206,34 @@ class AsyncPushUpdateHandler:
             self._unregister_webhook = None
             _LOGGER.debug("Unregistered webhook %s", self.webhook_id)
 
+    async def _parse_request_body(self, request) -> dict:
+        """Parse JSON body from either aiohttp Request or cloud MockRequest.
+
+        Nabu Casa cloudhooks deliver a MockRequest that exposes ``json()`` but
+        not ``read()``. Local webhook deliveries use a full aiohttp Request
+        with both. Prefer ``json()`` when available; fall back to ``read()``.
+        """
+        # Prefer json() — works for cloud MockRequest and aiohttp Request.
+        json_method = getattr(request, "json", None)
+        if callable(json_method):
+            try:
+                data = await json_method()
+                if isinstance(data, dict):
+                    return data
+            except Exception:  # noqa: BLE001
+                # Fall through to read() path.
+                pass
+
+        read_method = getattr(request, "read", None)
+        if callable(read_method):
+            raw_body = await read_method()
+            if isinstance(raw_body, bytes):
+                return json.loads(raw_body)
+            if isinstance(raw_body, str):
+                return json.loads(raw_body)
+
+        raise ValueError("Request body is not valid JSON")
+
     async def _handle_webhook(
         self, hass: HomeAssistant, webhook_id, request
     ) -> web.Response | None:
@@ -215,19 +243,18 @@ class AsyncPushUpdateHandler:
                 _LOGGER.error("Unsupported method: %s", request.method)
                 return web.Response(status=405)
 
-            raw_body = await request.read()
-            _LOGGER.debug(
-                "Webhook hit received: method=%s headers=%s body=%s",
-                request.method,
-                dict(request.headers),
-                raw_body.decode("utf-8", errors="replace"),
-            )
-
             try:
-                data = json.loads(raw_body)
+                data = await self._parse_request_body(request)
             except Exception as json_err:  # noqa: BLE001
                 _LOGGER.error("Failed to parse webhook JSON: %s", json_err)
                 return web.Response(status=400)
+
+            _LOGGER.debug(
+                "Webhook hit received: method=%s headers=%s data=%s",
+                request.method,
+                dict(getattr(request, "headers", {}) or {}),
+                data,
+            )
 
             # Validate the push secret via the Authorization header.
             # U-Tec sends it as "Bearer <access_token>" in the HTTP header.
@@ -238,7 +265,9 @@ class AsyncPushUpdateHandler:
                     "Webhook received before push secret was initialised -- rejecting"
                 )
                 return web.Response(status=401)
-            auth_header = request.headers.get("Authorization", "")
+            auth_header = (getattr(request, "headers", {}) or {}).get(
+                "Authorization", ""
+            )
             incoming_token = auth_header.removeprefix("Bearer ").strip()
             if not incoming_token:
                 _LOGGER.warning(
