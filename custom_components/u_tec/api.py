@@ -7,7 +7,7 @@ from datetime import timedelta
 
 from aiohttp import ClientSession, web
 
-from homeassistant.components import webhook
+from homeassistant.components import cloud, webhook
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_entry_oauth2_flow, network
 from homeassistant.helpers.event import async_track_time_interval
@@ -55,16 +55,37 @@ class AsyncPushUpdateHandler:
         self._push_secret: str | None = None
         self.api = api
         self._auth_data = None
+        self._used_cloudhook = False
 
     def _generate_secret(self) -> str:
         """Generate a fresh random secret token for push validation."""
         return secrets.token_urlsafe(32)
 
-    async def async_register_webhook(self, auth_data) -> bool:
-        """Register webhook with Home Assistant and the Uhome API."""
-        self._auth_data = auth_data
+    async def _resolve_webhook_url(self) -> str | None:
+        """Resolve an externally-reachable webhook URL.
 
-        # Try multiple URL resolution strategies
+        Prefer a Nabu Casa cloudhook when Home Assistant Cloud is active.
+        Otherwise fall back through network.get_url strategies.
+        """
+        # 1. Prefer a real cloudhook when Nabu Casa is active.
+        if cloud.async_active_subscription(self.hass):
+            try:
+                webhook_url = await cloud.async_get_or_create_cloudhook(
+                    self.hass, self.webhook_id
+                )
+                if webhook_url:
+                    self._used_cloudhook = True
+                    _LOGGER.debug("Using Nabu Casa cloudhook: %s", webhook_url)
+                    return webhook_url
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Cloudhook creation failed, falling back to external URL: %s",
+                    err,
+                )
+
+        self._used_cloudhook = False
+
+        # 2. Fall back through network.get_url strategies.
         external_url = None
         for allow_internal, allow_ip, prefer_cloud in [
             (False, False, False),
@@ -81,13 +102,26 @@ class AsyncPushUpdateHandler:
                 if external_url:
                     _LOGGER.debug(
                         "Resolved webhook base URL: %s (internal=%s, cloud=%s)",
-                        external_url, allow_internal, prefer_cloud,
+                        external_url,
+                        allow_internal,
+                        prefer_cloud,
                     )
                     break
             except NoURLAvailableError:
                 continue
 
         if not external_url:
+            return None
+
+        return webhook.async_generate_url(self.hass, self.webhook_id)
+
+    async def async_register_webhook(self, auth_data) -> bool:
+        """Register webhook with Home Assistant and the Uhome API."""
+        self._auth_data = auth_data
+
+        webhook_url = await self._resolve_webhook_url()
+
+        if not webhook_url:
             _LOGGER.error(
                 "No external URL available for push notifications. "
                 "Configure an external URL in Settings -> System -> Network, "
@@ -95,11 +129,17 @@ class AsyncPushUpdateHandler:
             )
             return False
 
-        webhook_url = webhook.async_generate_url(self.hass, self.webhook_id)
-
-        if any(local in webhook_url for local in (
-            "192.168.", "10.", "172.", "homeassistant.local", "localhost", "127.0."
-        )):
+        if not self._used_cloudhook and any(
+            local in webhook_url
+            for local in (
+                "192.168.",
+                "10.",
+                "172.",
+                "homeassistant.local",
+                "localhost",
+                "127.0.",
+            )
+        ):
             _LOGGER.warning(
                 "Webhook URL %s appears to be a local address. "
                 "U-Tec's servers cannot reach it -- push state updates will not work. "
@@ -225,6 +265,8 @@ class AsyncPushUpdateHandler:
             return web.json_response({"success": False, "error": str(err)}, status=400)
         except Exception as err:  # noqa: BLE001
             _LOGGER.exception("Unexpected error processing webhook: %s", err)
-            return web.json_response({"success": False, "error": "Internal error"}, status=500)
+            return web.json_response(
+                {"success": False, "error": "Internal error"}, status=500
+            )
         else:
             return web.json_response({"success": True})
