@@ -7,7 +7,7 @@ from datetime import timedelta
 
 from aiohttp import ClientSession, web
 
-from homeassistant.components import cloud, webhook
+from homeassistant.components import webhook
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_entry_oauth2_flow, network
 from homeassistant.helpers.event import async_track_time_interval
@@ -66,8 +66,14 @@ class AsyncPushUpdateHandler:
 
         Prefer a Nabu Casa cloudhook when Home Assistant Cloud is active.
         Otherwise fall back through network.get_url strategies.
+
+        Cloud is imported lazily so loading this module does not pull in the
+        full Cloud → Alexa → camera dependency chain (needed for unit tests
+        and lighter HA startup).
         """
         # 1. Prefer a real cloudhook when Nabu Casa is active.
+        from homeassistant.components import cloud
+
         if cloud.async_active_subscription(self.hass):
             try:
                 webhook_url = await cloud.async_get_or_create_cloudhook(
