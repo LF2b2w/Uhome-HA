@@ -84,6 +84,15 @@ class UhomeBatterySensorEntity(CoordinatorEntity, SensorEntity):
         self._attr_native_unit_of_measurement = PERCENTAGE
 
     @property
+    def available(self) -> bool:
+        """Return True if entity is available.
+
+        Unavailable only when the device is offline or two consecutive polls failed.
+        """
+        device_available = getattr(self._device, "available", True)
+        return self.coordinator.poll_healthy_enough and device_available
+
+    @property
     def native_value(self) -> int | None:
         """Return battery level."""
         return self._device.battery_level

@@ -137,8 +137,13 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
 
     @property
     def available(self) -> bool:
-        """Return True if entity is available."""
-        return self.coordinator.last_update_success and self._device.available
+        """Return True if entity is available.
+
+        Unavailable only when the device itself is offline, or the coordinator
+        has failed two consecutive API polls (a single transient failure is
+        tolerated).
+        """
+        return self.coordinator.poll_healthy_enough and self._device.available
 
     @property
     def is_locked(self) -> bool:
