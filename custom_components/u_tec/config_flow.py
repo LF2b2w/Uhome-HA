@@ -26,6 +26,9 @@ from homeassistant.helpers import config_entry_oauth2_flow
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.selector import (
     BooleanSelector,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
@@ -43,7 +46,9 @@ from .const import (
     CONF_OPTIMISTIC_SWITCHES,
     CONF_PUSH_DEVICES,
     CONF_PUSH_ENABLED,
+    CONF_SCAN_INTERVAL,
     DEFAULT_API_SCOPE,
+    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     OAUTH2_AUTHORIZE,
     OAUTH2_TOKEN,
@@ -55,6 +60,10 @@ OPTIMISTIC_MODE_ALL = "all"
 OPTIMISTIC_MODE_NONE = "none"
 OPTIMISTIC_MODE_CUSTOM = "custom"
 OPTIMISTIC_MODES = [OPTIMISTIC_MODE_ALL, OPTIMISTIC_MODE_NONE, OPTIMISTIC_MODE_CUSTOM]
+
+# Bounds for the UI-configurable poll interval (seconds).
+_MIN_SCAN_INTERVAL = 10
+_MAX_SCAN_INTERVAL = 3600
 
 
 def _current_mode(value: bool | list[str] | None) -> str:
@@ -213,6 +222,7 @@ class UhomeOAuth2FlowHandler(
             CONF_PUSH_ENABLED: True,
             CONF_PUSH_DEVICES: [],  # Empty list means all devices
             CONF_HA_DEVICES: [],
+            CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
         }
         # Static title — flow_impl.name is "Configuration.yaml" for the in-memory
         # LocalOAuth2Implementation built in async_step_replace_credentials, which
@@ -312,6 +322,7 @@ class UhomeOAuth2FlowHandler(
         """Get the options flow for this handler."""
         return OptionsFlowHandler(config_entry)
 
+
 class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow with proper device discovery."""
 
@@ -333,7 +344,46 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 "update_push": "Update Push Status",
                 "get_devices": "Select Active Devices",
                 "optimistic_updates": "Configure Optimistic Updates",
+                "polling_interval": "Polling Interval",
             },
+        )
+
+    async def async_step_polling_interval(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Configure how often device state is polled from the U-Tec API.
+
+        With working cloudhooks, a longer interval is usually fine; the default
+        remains 10s for installs that rely on polling alone.
+        """
+        if user_input is not None:
+            self.options[CONF_SCAN_INTERVAL] = int(user_input[CONF_SCAN_INTERVAL])
+            return self.async_create_entry(title="", data=self.options)
+
+        current = int(
+            self.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+        )
+        current = max(_MIN_SCAN_INTERVAL, min(_MAX_SCAN_INTERVAL, current))
+
+        return self.async_show_form(
+            step_id="polling_interval",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_SCAN_INTERVAL,
+                        default=current,
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=_MIN_SCAN_INTERVAL,
+                            max=_MAX_SCAN_INTERVAL,
+                            step=5,
+                            unit_of_measurement="seconds",
+                            mode=NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+            ),
         )
 
     async def async_step_update_push(
@@ -574,6 +624,3 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 }
             ),
         )
-
-
-
