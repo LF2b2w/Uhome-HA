@@ -26,6 +26,7 @@ def coord_with_switch(hass):
     coord.devices = {"sw-1": sw}
     coord.config_entry = entry
     coord.last_update_success = True
+    coord.poll_healthy_enough = True
     coord.data = {}
     return coord, sw
 
@@ -97,6 +98,7 @@ async def test_assumed_state_respects_optimistic_config(hass):
     coord.devices = {"sw-1": sw}
     coord.config_entry = entry
     coord.last_update_success = True
+    coord.poll_healthy_enough = True
 
     ent = UhomeSwitchEntity(coord, "sw-1")
     ent._optimistic_is_on = True
@@ -120,6 +122,7 @@ async def test_setup_entry_filters_non_switch_devices(hass):
     coord.devices = {"sw-1": sw, "lock-1": lock}
     coord.config_entry = entry
     coord.last_update_success = True
+    coord.poll_healthy_enough = True
     coord.data = {}
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coord}
@@ -135,11 +138,11 @@ async def test_setup_entry_filters_non_switch_devices(hass):
     assert added[0]._device.device_id == "sw-1"
 
 
-# --- available returns False when last_update_success=False ---
+# --- available returns False when consecutive poll failures exceed threshold ---
 
 
 def test_available_false_when_coordinator_failed(hass):
-    """coordinator.last_update_success=False → available is False."""
+    """coordinator.poll_healthy_enough=False → available is False."""
     entry = make_config_entry()
     entry.add_to_hass(hass)
     sw = make_fake_switch("sw-1", available=True)
@@ -147,6 +150,7 @@ def test_available_false_when_coordinator_failed(hass):
     coord.devices = {"sw-1": sw}
     coord.config_entry = entry
     coord.last_update_success = False
+    coord.poll_healthy_enough = False
 
     ent = UhomeSwitchEntity(coord, "sw-1")
     assert ent.available is False
@@ -199,6 +203,7 @@ async def test_turn_on_no_optimistic_when_disabled(hass):
     coord.devices = {"sw-1": sw}
     coord.config_entry = entry
     coord.last_update_success = True
+    coord.poll_healthy_enough = True
 
     ent = UhomeSwitchEntity(coord, "sw-1")
     ent.hass = hass
@@ -224,6 +229,7 @@ async def test_turn_off_no_optimistic_when_disabled(hass):
     coord.devices = {"sw-1": sw}
     coord.config_entry = entry
     coord.last_update_success = True
+    coord.poll_healthy_enough = True
 
     ent = UhomeSwitchEntity(coord, "sw-1")
     ent.hass = hass
