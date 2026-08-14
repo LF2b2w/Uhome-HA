@@ -13,7 +13,7 @@ def _make_request(
     *,
     body: bytes = b"{}",
     headers: dict | None = None,
-    json_data: dict | None = None,
+    json_data: dict | list | None = None,
     support_read: bool = True,
     support_json: bool = True,
 ):
@@ -113,6 +113,20 @@ async def test_accepts_cloudhook_style_request_without_read(webhook_handler, has
     resp = await h._handle_webhook(hass, "wh-id", req)
     assert resp.status == 200
     coord.update_push_data.assert_awaited_once()
+
+
+async def test_accepts_cloudhook_list_payload_without_read(webhook_handler, hass):
+    """Cloudhook MockRequest with a top-level list body (issue #30 shape)."""
+    h, coord = webhook_handler
+    list_payload = [{"id": "lock-1", "states": []}]
+    req = _make_request(
+        support_read=False,
+        json_data=list_payload,
+        headers={"Authorization": "Bearer correct-secret"},
+    )
+    resp = await h._handle_webhook(hass, "wh-id", req)
+    assert resp.status == 200
+    coord.update_push_data.assert_awaited_once_with(list_payload)
 
 
 async def test_rejects_unknown_entry_id(hass, mock_uhome_api):
