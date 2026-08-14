@@ -65,6 +65,9 @@ OPTIMISTIC_MODES = [OPTIMISTIC_MODE_ALL, OPTIMISTIC_MODE_NONE, OPTIMISTIC_MODE_C
 _MIN_SCAN_INTERVAL = 10
 _MAX_SCAN_INTERVAL = 3600
 
+# Mirrors __init__._YAML_CONFIG_KEY (avoid importing __init__ from here).
+_YAML_CONFIG_KEY = "_yaml_config"
+
 
 def _current_mode(value: bool | list[str] | None) -> str:
     """Infer the mode selector default from a stored option value."""
@@ -218,11 +221,13 @@ class UhomeOAuth2FlowHandler(
                 options=dict(entry.options),
             )
 
+        # Do not store scan_interval here — only persist it when the user
+        # explicitly saves Configure → Polling Interval, so configuration.yaml
+        # continues to apply until then.
         options = {
             CONF_PUSH_ENABLED: True,
             CONF_PUSH_DEVICES: [],  # Empty list means all devices
             CONF_HA_DEVICES: [],
-            CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
         }
         # Static title — flow_impl.name is "Configuration.yaml" for the in-memory
         # LocalOAuth2Implementation built in async_step_replace_credentials, which
@@ -334,6 +339,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         self.options = dict(config_entry.options)
         self._pending_pickers: list[str] = []
 
+    def _default_scan_interval(self) -> int:
+        """UI default: saved option, else YAML, else built-in default."""
+        if CONF_SCAN_INTERVAL in self.options:
+            current = int(self.options[CONF_SCAN_INTERVAL])
+        else:
+            yaml_config = self.hass.data.get(DOMAIN, {}).get(_YAML_CONFIG_KEY, {})
+            current = int(yaml_config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+        return max(_MIN_SCAN_INTERVAL, min(_MAX_SCAN_INTERVAL, current))
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -355,16 +369,13 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Configure how often device state is polled from the U-Tec API.
 
         With working cloudhooks, a longer interval is usually fine; the default
-        remains 10s for installs that rely on polling alone.
+        remains 10s for installs that rely on polling alone. The form prefill
+        uses any saved UI value, otherwise configuration.yaml, otherwise 10s.
         """
         if user_input is not None:
+            # Only now is scan_interval written to options (explicit user choice).
             self.options[CONF_SCAN_INTERVAL] = int(user_input[CONF_SCAN_INTERVAL])
             return self.async_create_entry(title="", data=self.options)
-
-        current = int(
-            self.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
-        )
-        current = max(_MIN_SCAN_INTERVAL, min(_MAX_SCAN_INTERVAL, current))
 
         return self.async_show_form(
             step_id="polling_interval",
@@ -372,7 +383,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 {
                     vol.Required(
                         CONF_SCAN_INTERVAL,
-                        default=current,
+                        default=self._default_scan_interval(),
                     ): NumberSelector(
                         NumberSelectorConfig(
                             min=_MIN_SCAN_INTERVAL,
