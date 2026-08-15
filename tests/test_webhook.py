@@ -1,6 +1,6 @@
 """Tests for AsyncPushUpdateHandler._handle_webhook (security boundary)."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -129,6 +129,52 @@ async def test_accepts_cloudhook_list_payload_without_read(webhook_handler, hass
     coord.update_push_data.assert_awaited_once_with(list_payload)
 
 
+async def test_accepts_list_payload_via_read_fallback(webhook_handler, hass):
+    """read()-only path with a top-level list body (no json())."""
+    h, coord = webhook_handler
+    list_body = b'[{"id": "lock-1", "states": []}]'
+    req = _make_request(
+        body=list_body,
+        support_json=False,
+        headers={"Authorization": "Bearer correct-secret"},
+    )
+    resp = await h._handle_webhook(hass, "wh-id", req)
+    assert resp.status == 200
+    coord.update_push_data.assert_awaited_once()
+    args = coord.update_push_data.await_args.args[0]
+    assert isinstance(args, list)
+    assert args[0]["id"] == "lock-1"
+
+
+async def test_rejects_scalar_json_body(webhook_handler, hass):
+    """Top-level scalar JSON must 400 — not be forwarded to the coordinator."""
+    h, coord = webhook_handler
+    req = _make_request(
+        support_read=False,
+        json_data="not-an-object",
+        headers={"Authorization": "Bearer correct-secret"},
+    )
+    resp = await h._handle_webhook(hass, "wh-id", req)
+    assert resp.status == 400
+    coord.update_push_data.assert_not_awaited()
+
+
+async def test_rejects_null_json_body(webhook_handler, hass):
+    """Top-level null JSON must 400."""
+    h, coord = webhook_handler
+    req = _make_request(
+        support_read=False,
+        json_data=None,
+        headers={"Authorization": "Bearer correct-secret"},
+    )
+    # json_data=None makes support_json parse from body default "{}" — force null
+    req.json = AsyncMock(return_value=None)
+    del req.read
+    resp = await h._handle_webhook(hass, "wh-id", req)
+    assert resp.status == 400
+    coord.update_push_data.assert_not_awaited()
+
+
 async def test_rejects_unknown_entry_id(hass, mock_uhome_api):
     h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="bogus")
     h._push_secret = "s"
@@ -166,3 +212,21 @@ async def test_rejects_when_push_secret_not_initialised(hass, mock_uhome_api):
     resp = await h._handle_webhook(hass, "wh-id", req)
     assert resp.status == 401
     coord.update_push_data.assert_not_awaited()
+
+
+async def test_unregister_deletes_cloudhook_when_used(hass, mock_uhome_api):
+    """Full entry removal must delete the Nabu Casa cloudhook, not only local handler."""
+    h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="entry-1")
+    h._unregister_webhook = True
+    h._used_cloudhook = True
+
+    with patch("custom_components.u_tec.api.webhook.async_unregister") as mock_unreg, patch(
+        "homeassistant.components.cloud.async_delete_cloudhook",
+        new_callable=AsyncMock,
+    ) as mock_delete:
+        await h.unregister_webhook()
+
+    mock_unreg.assert_called_once_with(hass, h.webhook_id)
+    mock_delete.assert_awaited_once_with(hass, h.webhook_id)
+    assert h._used_cloudhook is False
+    assert h._unregister_webhook is None

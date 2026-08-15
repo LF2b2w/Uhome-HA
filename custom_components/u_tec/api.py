@@ -214,7 +214,13 @@ class AsyncPushUpdateHandler:
         )
 
     async def unregister_webhook(self) -> None:
-        """Unregister the webhook and cancel the re-registration scheduler."""
+        """Unregister the webhook and cancel the re-registration scheduler.
+
+        Also deletes the Nabu Casa cloudhook when one was created. HA's
+        ``webhook.async_unregister`` only removes the local handler; without
+        ``cloud.async_delete_cloudhook`` an orphaned hook remains on
+        hooks.nabu.casa after full config-entry removal.
+        """
         if self._cancel_reregister:
             self._cancel_reregister()
             self._cancel_reregister = None
@@ -222,6 +228,21 @@ class AsyncPushUpdateHandler:
             webhook.async_unregister(self.hass, self.webhook_id)
             self._unregister_webhook = None
             _LOGGER.debug("Unregistered webhook %s", self.webhook_id)
+
+        if self._used_cloudhook:
+            try:
+                from homeassistant.components import cloud
+
+                await cloud.async_delete_cloudhook(self.hass, self.webhook_id)
+                _LOGGER.debug("Deleted cloudhook %s", self.webhook_id)
+            except Exception as err:  # noqa: BLE001
+                # Tolerate failure (Cloud offline, already deleted, etc.).
+                _LOGGER.debug(
+                    "Could not delete cloudhook %s: %s",
+                    self.webhook_id,
+                    err,
+                )
+            self._used_cloudhook = False
 
     async def _parse_request_body(self, request) -> dict | list:
         """Parse JSON body from either aiohttp Request or cloud MockRequest.
