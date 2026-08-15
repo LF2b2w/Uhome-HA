@@ -83,7 +83,8 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         self._cancel_discovery: callable | None = None
         # Consecutive failed polls. Entities stay available through a single
         # transient failure; two in a row (or a device offline flag) marks them
-        # unavailable. Auth failures still raise ConfigEntryAuthFailed.
+        # unavailable. Auth failures set the counter to the threshold immediately
+        # because HA stops rescheduling after ConfigEntryAuthFailed.
         self.consecutive_update_failures = 0
         _LOGGER.info(
             "Uhome data coordinator initialized (poll=%ds, discovery=%ds)",
@@ -213,10 +214,12 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                 for device_id, device in self.devices.items()
             }
         except AuthenticationError as err:
-            self.consecutive_update_failures += 1
+            # HA stops rescheduling after ConfigEntryAuthFailed, so a single
+            # increment would leave entities "available" with stale state.
+            self.consecutive_update_failures = MAX_CONSECUTIVE_UPDATE_FAILURES
             raise ConfigEntryAuthFailed(f"Credentials expired: {err}") from err
         except ConfigEntryAuthFailed:
-            self.consecutive_update_failures += 1
+            self.consecutive_update_failures = MAX_CONSECUTIVE_UPDATE_FAILURES
             raise
         except ApiError as err:
             self.consecutive_update_failures += 1
@@ -305,6 +308,11 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     _LOGGER.debug(
                         "Received update for unknown device: %s", device_id
                     )
+
+            # A successful authenticated push proves the channel is alive —
+            # reset the poll-failure counter so entities stay available during
+            # transient poll outages while push continues to deliver state.
+            self.consecutive_update_failures = 0
 
             # Trigger data update for all entities
             self.async_set_updated_data(self.data)
