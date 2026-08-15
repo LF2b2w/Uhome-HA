@@ -87,10 +87,9 @@ class UhomeBatterySensorEntity(CoordinatorEntity, SensorEntity):
     def available(self) -> bool:
         """Return True if entity is available.
 
-        Unavailable only when the device is offline or two consecutive polls failed.
+        Unavailable only when the device is offline or consecutive polls failed.
         """
-        device_available = getattr(self._device, "available", True)
-        return self.coordinator.poll_healthy_enough and device_available
+        return self.coordinator.poll_healthy_enough and self._device.available
 
     @property
     def native_value(self) -> int | None:

@@ -23,6 +23,9 @@ from .const import (
     DEFAULT_DISCOVERY_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    MAX_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
+    YAML_CONFIG_KEY,
 )
 from .coordinator import UhomeDataUpdateCoordinator
 
@@ -51,20 +54,19 @@ CONFIG_SCHEMA = vol.Schema(
     extra=vol.ALLOW_EXTRA,
 )
 
-# Key used inside hass.data[DOMAIN] for yaml-sourced config (separate from entry IDs).
-_YAML_CONFIG_KEY = "_yaml_config"
-
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Read configuration.yaml settings and store for use by config entries."""
     hass.data.setdefault(DOMAIN, {})
     if DOMAIN in config:
-        hass.data[DOMAIN][_YAML_CONFIG_KEY] = config[DOMAIN]
+        hass.data[DOMAIN][YAML_CONFIG_KEY] = config[DOMAIN]
         if CONF_SCAN_INTERVAL in config[DOMAIN]:
             _LOGGER.warning(
                 "configuration.yaml scan_interval for u_tec is deprecated; "
                 "configure the poll interval via Configure → Polling Interval. "
-                "The YAML value is still used until a UI value is saved."
+                "YAML applies only until a UI value is saved; after that the UI "
+                "value takes permanent precedence (remove the options key to "
+                "fall back to YAML again)."
             )
         _LOGGER.debug(
             "Loaded u_tec config from configuration.yaml: scan_interval=%s, discovery_interval=%s",
@@ -79,12 +81,15 @@ def _resolve_scan_interval(hass: HomeAssistant, entry: ConfigEntry) -> int:
 
     scan_interval is only written to entry.options when the user saves the
     Polling Interval options step — not on initial entry create — so YAML
-    continues to apply until the user opts into the UI setting.
+    continues to apply until the user opts into the UI setting. Values are
+    clamped to [MIN_SCAN_INTERVAL, MAX_SCAN_INTERVAL].
     """
     if CONF_SCAN_INTERVAL in entry.options:
-        return int(entry.options[CONF_SCAN_INTERVAL])
-    yaml_config = hass.data.get(DOMAIN, {}).get(_YAML_CONFIG_KEY, {})
-    return int(yaml_config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+        value = int(entry.options[CONF_SCAN_INTERVAL])
+    else:
+        yaml_config = hass.data.get(DOMAIN, {}).get(YAML_CONFIG_KEY, {})
+        value = int(yaml_config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+    return max(MIN_SCAN_INTERVAL, min(MAX_SCAN_INTERVAL, value))
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -104,7 +109,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     Uhomeapi = UHomeApi(auth_data)
 
     # Explicit UI option > configuration.yaml > built-in default.
-    yaml_config = hass.data.get(DOMAIN, {}).get(_YAML_CONFIG_KEY, {})
+    yaml_config = hass.data.get(DOMAIN, {}).get(YAML_CONFIG_KEY, {})
     scan_interval = _resolve_scan_interval(hass, entry)
     discovery_interval = yaml_config.get(
         CONF_DISCOVERY_INTERVAL, DEFAULT_DISCOVERY_INTERVAL
@@ -206,9 +211,12 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     # Apply poll interval without a full reload. Setting update_interval alone
     # may not reschedule an already-pending timer on all HA versions, so call
-    # _schedule_refresh when available.
+    # _schedule_refresh when available (private HA API; getattr guards crashes).
     if CONF_SCAN_INTERVAL in entry.options:
-        new_interval = int(entry.options[CONF_SCAN_INTERVAL])
+        new_interval = max(
+            MIN_SCAN_INTERVAL,
+            min(MAX_SCAN_INTERVAL, int(entry.options[CONF_SCAN_INTERVAL])),
+        )
         coordinator.update_interval = timedelta(seconds=new_interval)
         schedule = getattr(coordinator, "_schedule_refresh", None)
         if callable(schedule):
