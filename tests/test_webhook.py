@@ -162,14 +162,13 @@ async def test_rejects_scalar_json_body(webhook_handler, hass):
 async def test_rejects_null_json_body(webhook_handler, hass):
     """Top-level null JSON must 400."""
     h, coord = webhook_handler
+    # support_read=False already removes read(); force json() to return null.
     req = _make_request(
         support_read=False,
-        json_data=None,
+        json_data={"placeholder": True},
         headers={"Authorization": "Bearer correct-secret"},
     )
-    # json_data=None makes support_json parse from body default "{}" — force null
     req.json = AsyncMock(return_value=None)
-    del req.read
     resp = await h._handle_webhook(hass, "wh-id", req)
     assert resp.status == 400
     coord.update_push_data.assert_not_awaited()
@@ -214,19 +213,35 @@ async def test_rejects_when_push_secret_not_initialised(hass, mock_uhome_api):
     coord.update_push_data.assert_not_awaited()
 
 
+async def test_unregister_always_attempts_cloudhook_delete(hass, mock_uhome_api):
+    """Unregister always calls _delete_cloudhook (idempotent; not gated on flag)."""
+    h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="entry-1")
+    h._unregister_webhook = True
+    h._used_cloudhook = False  # even when flag is False, still attempt delete
+
+    with patch("custom_components.u_tec.api.webhook.async_unregister") as mock_unreg, patch.object(
+        h, "_delete_cloudhook", new_callable=AsyncMock
+    ) as mock_delete:
+        await h.unregister_webhook()
+
+    mock_unreg.assert_called_once_with(hass, h.webhook_id)
+    mock_delete.assert_awaited_once()
+    assert h._used_cloudhook is False
+    assert h._unregister_webhook is None
+
+
 async def test_unregister_deletes_cloudhook_when_used(hass, mock_uhome_api):
     """Full entry removal must delete the Nabu Casa cloudhook, not only local handler."""
     h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="entry-1")
     h._unregister_webhook = True
     h._used_cloudhook = True
 
-    with patch("custom_components.u_tec.api.webhook.async_unregister") as mock_unreg, patch(
-        "homeassistant.components.cloud.async_delete_cloudhook",
-        new_callable=AsyncMock,
+    with patch("custom_components.u_tec.api.webhook.async_unregister") as mock_unreg, patch.object(
+        h, "_delete_cloudhook", new_callable=AsyncMock
     ) as mock_delete:
         await h.unregister_webhook()
 
     mock_unreg.assert_called_once_with(hass, h.webhook_id)
-    mock_delete.assert_awaited_once_with(hass, h.webhook_id)
+    mock_delete.assert_awaited_once()
     assert h._used_cloudhook is False
     assert h._unregister_webhook is None
