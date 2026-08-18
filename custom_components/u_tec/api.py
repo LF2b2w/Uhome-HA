@@ -88,6 +88,27 @@ class AsyncPushUpdateHandler:
             _LOGGER.debug("Using Nabu Casa cloudhook: %s", webhook_url)
         return webhook_url or None
 
+    async def _delete_cloudhook(self) -> None:
+        """Best-effort delete of any Nabu Casa cloudhook for this webhook_id.
+
+        Always attempted on unregister (idempotent) so a cloudhook created in a
+        previous process lifetime, or after fallback-then-Cloud-reconnect, is
+        still cleaned up. Lazy-imports cloud to avoid the Alexa/turbojpeg import
+        chain — unit tests patch this method as a seam.
+        """
+        try:
+            from homeassistant.components import cloud
+
+            await cloud.async_delete_cloudhook(self.hass, self.webhook_id)
+            _LOGGER.debug("Deleted cloudhook %s", self.webhook_id)
+        except Exception as err:  # noqa: BLE001
+            # Orphaned hooks on hooks.nabu.casa are otherwise invisible.
+            _LOGGER.warning(
+                "Could not delete cloudhook %s (may already be gone): %s",
+                self.webhook_id,
+                err,
+            )
+
     async def _resolve_webhook_url(self) -> str | None:
         """Resolve an externally-reachable webhook URL.
 
@@ -214,7 +235,15 @@ class AsyncPushUpdateHandler:
         )
 
     async def unregister_webhook(self) -> None:
-        """Unregister the webhook and cancel the re-registration scheduler."""
+        """Unregister the webhook and cancel the re-registration scheduler.
+
+        Always attempts cloudhook deletion (idempotent). HA's
+        ``webhook.async_unregister`` only removes the local handler; without
+        ``cloud.async_delete_cloudhook`` an orphaned hook can remain on
+        hooks.nabu.casa after full config-entry removal. Deletion is not gated
+        on ``_used_cloudhook`` so hooks from a prior process lifetime (or after
+        fallback→Cloud reconnect) are still cleaned up.
+        """
         if self._cancel_reregister:
             self._cancel_reregister()
             self._cancel_reregister = None
@@ -222,6 +251,9 @@ class AsyncPushUpdateHandler:
             webhook.async_unregister(self.hass, self.webhook_id)
             self._unregister_webhook = None
             _LOGGER.debug("Unregistered webhook %s", self.webhook_id)
+
+        await self._delete_cloudhook()
+        self._used_cloudhook = False
 
     async def _parse_request_body(self, request) -> dict | list:
         """Parse JSON body from either aiohttp Request or cloud MockRequest.
