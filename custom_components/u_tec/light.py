@@ -42,7 +42,7 @@ _LOGGER = logging.getLogger(__name__)
 # confirm/timeout path (see _handle_push_update).
 # https://github.com/LF2b2w/Uhome-HA/issues/58
 
-# U-Tec reports brightness as 1-100, not 0-100. 
+# U-Tec reports brightness as 1-100, not 0-100.
 BRIGHTNESS_SCALE = (1, 100)
 
 
@@ -140,8 +140,11 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
 
     @property
     def available(self) -> bool:
-        """Return True if entity is available."""
-        return self.coordinator.last_update_success and self._device.available
+        """Return True if entity is available.
+
+        Unavailable only when the device is offline or two consecutive polls failed.
+        """
+        return self.coordinator.poll_healthy_enough and self._device.available
 
     @property
     def is_on(self) -> bool:

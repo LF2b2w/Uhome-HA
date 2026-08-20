@@ -6,6 +6,7 @@ import logging
 from custom_components.u_tec.const import (
     DEFAULT_DISCOVERY_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
+    MAX_CONSECUTIVE_UPDATE_FAILURES,
     SIGNAL_DEVICE_UPDATE,
     SIGNAL_NEW_DEVICE,
 )
@@ -80,11 +81,25 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         self.blacklisted_devices = []
         self._discovery_interval = timedelta(seconds=discovery_interval)
         self._cancel_discovery: callable | None = None
+        # Consecutive failed polls. Entities stay available through a single
+        # transient failure; two in a row (or a device offline flag) marks them
+        # unavailable. Auth failures set the counter to the threshold immediately
+        # because HA stops rescheduling after ConfigEntryAuthFailed.
+        self.consecutive_update_failures = 0
         _LOGGER.info(
             "Uhome data coordinator initialized (poll=%ds, discovery=%ds)",
             scan_interval,
             discovery_interval,
         )
+
+    @property
+    def poll_healthy_enough(self) -> bool:
+        """Return True if poll failures have not crossed the unavailable threshold.
+
+        Used by entities instead of ``last_update_success`` so a single failed
+        poll does not blank every entity. Sustained failures still do.
+        """
+        return self.consecutive_update_failures < MAX_CONSECUTIVE_UPDATE_FAILURES
 
     async def async_start_periodic_discovery(self) -> None:
         """Start periodic device discovery separate from state polling."""
@@ -174,32 +189,47 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, dict]:
         """Fetch state for all known devices in a single bulk API call."""
         if not self.devices:
+            self.consecutive_update_failures = 0
             return {}
 
         _LOGGER.debug("Polling state for %d Uhome devices (bulk)", len(self.devices))
         try:
             device_ids = list(self.devices.keys())
             response = await self.api.get_device_state(device_ids, None)
+
+            # U-Tec returns HTTP 200 with an error envelope (e.g. INVALID_TOKEN) that
+            # get_device_state does not raise on — surface it instead of treating an
+            # error response as an empty-but-successful poll.
+            _raise_for_error_payload(response)
+
+            if response and "payload" in response:
+                for device_data in response["payload"].get("devices", []):
+                    device_id = device_data.get("id")
+                    if device_id and device_id in self.devices:
+                        await self.devices[device_id].update_state_data(device_data)
+
+            self.consecutive_update_failures = 0
+            return {
+                device_id: device.get_state_data()
+                for device_id, device in self.devices.items()
+            }
         except AuthenticationError as err:
+            # HA stops rescheduling after ConfigEntryAuthFailed, so a single
+            # increment would leave entities "available" with stale state.
+            self.consecutive_update_failures = MAX_CONSECUTIVE_UPDATE_FAILURES
             raise ConfigEntryAuthFailed(f"Credentials expired: {err}") from err
+        except ConfigEntryAuthFailed:
+            self.consecutive_update_failures = MAX_CONSECUTIVE_UPDATE_FAILURES
+            raise
         except ApiError as err:
+            self.consecutive_update_failures += 1
             raise UpdateFailed(f"Error communicating with API: {err}") from err
-
-        # U-Tec returns HTTP 200 with an error envelope (e.g. INVALID_TOKEN) that
-        # get_device_state does not raise on — surface it instead of treating an
-        # error response as an empty-but-successful poll.
-        _raise_for_error_payload(response)
-
-        if response and "payload" in response:
-            for device_data in response["payload"].get("devices", []):
-                device_id = device_data.get("id")
-                if device_id and device_id in self.devices:
-                    await self.devices[device_id].update_state_data(device_data)
-
-        return {
-            device_id: device.get_state_data()
-            for device_id, device in self.devices.items()
-        }
+        except UpdateFailed:
+            self.consecutive_update_failures += 1
+            raise
+        except Exception:
+            self.consecutive_update_failures += 1
+            raise
 
     async def update_push_data(self, push_data):
         """Process push update from webhook."""
@@ -278,6 +308,11 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     _LOGGER.debug(
                         "Received update for unknown device: %s", device_id
                     )
+
+            # A successful authenticated push proves the channel is alive —
+            # reset the poll-failure counter so entities stay available during
+            # transient poll outages while push continues to deliver state.
+            self.consecutive_update_failures = 0
 
             # Trigger data update for all entities
             self.async_set_updated_data(self.data)

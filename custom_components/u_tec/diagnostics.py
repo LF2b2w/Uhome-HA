@@ -104,6 +104,8 @@ async def async_get_config_entry_diagnostics(
         "config_entry": async_redact_data(entry.as_dict(), REDACT_KEYS),
         "coordinator_data": {
             "last_update_success": coordinator.last_update_success,
+            "consecutive_update_failures": coordinator.consecutive_update_failures,
+            "poll_healthy_enough": coordinator.poll_healthy_enough,
             "device_count": len(coordinator.devices),
         },
         "devices": async_redact_data(device_data, REDACT_KEYS),

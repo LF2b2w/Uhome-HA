@@ -26,13 +26,13 @@
       "single_instance_allowed": "[%key:common::config_flow::abort::single_instance_allowed%]"
     },
     "create_entry": {
-    "default": "[%key:common::config_flow::create_entry::authenticated%]"
+      "default": "[%key:common::config_flow::create_entry::authenticated%]"
     },
-      "error": {
-        "no_api_conf": "API not available",
-        "CE_invalid": "Invalid configuration",
-        "cannot_connect": "Failed to connect to API",
-        "empty_credentials": "Both Client ID and Client Secret are required."
+    "error": {
+      "no_api_conf": "API not available",
+      "CE_invalid": "Invalid configuration",
+      "cannot_connect": "Failed to connect to API",
+      "empty_credentials": "Both Client ID and Client Secret are required."
     }
   },
   "options": {
@@ -51,44 +51,51 @@
           "push_devices": "Devices"
         }
       },
-        "device_selection": {
-          "title": "Select Active Devices",
-          "description": "Choose which devices should be active in HomeAssistant.",
-          "data": {
-            "selected_devices": "Devices"
-          }
-        },
-        "optimistic_updates": {
-          "title": "Optimistic Updates",
-          "description": "Pick how each device type should reflect commands. 'All' writes optimistic state for every device of that type, 'None' waits for confirmed state, 'Custom' lets you pick specific devices.",
-          "data": {
-            "lights_mode": "Lights",
-            "switches_mode": "Switches",
-            "locks_mode": "Locks"
-          }
-        },
-        "pick_lights": {
-          "title": "Optimistic Lights",
-          "description": "Select the light devices that should use optimistic updates. Unselected lights will wait for confirmed state.",
-          "data": {
-            "optimistic_lights": "Optimistic lights"
-          }
-        },
-        "pick_switches": {
-          "title": "Optimistic Switches",
-          "description": "Select the switch devices that should use optimistic updates. Unselected switches will wait for confirmed state.",
-          "data": {
-            "optimistic_switches": "Optimistic switches"
-          }
-        },
-        "pick_locks": {
-          "title": "Optimistic Locks",
-          "description": "Select the lock devices that should use optimistic updates. Unselected locks will wait for confirmed state.",
-          "data": {
-            "optimistic_locks": "Optimistic locks"
-          }
+      "device_selection": {
+        "title": "Select Active Devices",
+        "description": "Choose which devices should be active in HomeAssistant.",
+        "data": {
+          "selected_devices": "Devices"
+        }
+      },
+      "optimistic_updates": {
+        "title": "Optimistic Updates",
+        "description": "Pick how each device type should reflect commands. 'All' writes optimistic state for every device of that type, 'None' waits for confirmed state, 'Custom' lets you pick specific devices.",
+        "data": {
+          "lights_mode": "Lights",
+          "switches_mode": "Switches",
+          "locks_mode": "Locks"
+        }
+      },
+      "pick_lights": {
+        "title": "Optimistic Lights",
+        "description": "Select the light devices that should use optimistic updates. Unselected lights will wait for confirmed state.",
+        "data": {
+          "optimistic_lights": "Optimistic lights"
+        }
+      },
+      "pick_switches": {
+        "title": "Optimistic Switches",
+        "description": "Select the switch devices that should use optimistic updates. Unselected switches will wait for confirmed state.",
+        "data": {
+          "optimistic_switches": "Optimistic switches"
+        }
+      },
+      "pick_locks": {
+        "title": "Optimistic Locks",
+        "description": "Select the lock devices that should use optimistic updates. Unselected locks will wait for confirmed state.",
+        "data": {
+          "optimistic_locks": "Optimistic locks"
+        }
+      },
+      "polling_interval": {
+        "title": "Polling Interval",
+        "description": "How often Home Assistant should poll the U-Tec API for device state. With working push (cloudhook) updates you can raise this (e.g. 300–600 seconds). The default of 10 seconds suits installs that rely mainly on polling.",
+        "data": {
+          "scan_interval": "Poll interval"
         }
       }
+    }
   },
   "selector": {
     "optimistic_mode": {

@@ -34,6 +34,8 @@ def coord_with_lock(hass):
     coord.devices = {"lock-1": lock}
     coord.config_entry = entry
     coord.last_update_success = True
+    coord.consecutive_update_failures = 0
+    coord.poll_healthy_enough = True
     coord.data = {}
     return coord, lock
 
@@ -113,6 +115,7 @@ async def test_setup_entry_excludes_non_lock_devices(hass):
     coord.devices = {"lock-1": lock, "sw-1": switch}
     coord.config_entry = entry
     coord.last_update_success = True
+    coord.poll_healthy_enough = True
     coord.data = {}
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coord}
@@ -127,11 +130,12 @@ async def test_setup_entry_excludes_non_lock_devices(hass):
 
 
 # ---------------------------------------------------------------------------
-# available returns False when coordinator or device unavailable
+# available: device offline OR consecutive poll failures threshold
 # ---------------------------------------------------------------------------
 
-def test_available_false_when_coordinator_update_failed(coord_with_lock):
+def test_available_false_when_consecutive_polls_failed(coord_with_lock):
     coord, lock = coord_with_lock
+    coord.poll_healthy_enough = False
     coord.last_update_success = False
     ent = UhomeLockEntity(coord, "lock-1")
     assert ent.available is False
