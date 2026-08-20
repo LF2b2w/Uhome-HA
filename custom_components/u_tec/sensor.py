@@ -8,7 +8,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE
+from homeassistant.const import PERCENTAGE, EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo
@@ -32,6 +32,7 @@ async def async_setup_entry(
     ]
 
     entities = _create_battery_entities(coordinator)
+    entities.append(UhomeLastPushSensor(coordinator))
     async_add_entities(entities)
 
     @callback
@@ -127,3 +128,32 @@ class UhomeBatterySensorEntity(CoordinatorEntity, SensorEntity):
     def _handle_push_update(self, push_data):
         """Update device from push data."""
         self.async_write_ha_state()
+
+
+class UhomeLastPushSensor(CoordinatorEntity, SensorEntity):
+    """Diagnostic sensor: timestamp of the most recent webhook push received.
+
+    Coordinator-level (not per-device): there is no physical device, so it ties
+    its device_info to the config entry. A stale value here while locks are still
+    changing state (caught by the 30s poll) is the signal that U-Tec push delivery
+    has died — surfaced by the ha-configs push-health-monitor automation.
+    """
+
+    _attr_has_entity_name = False
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: UhomeDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        entry_id = coordinator.config_entry.entry_id
+        self._attr_unique_id = f"{DOMAIN}_last_push_{entry_id}"
+        self._attr_name = "Utec Last Push"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{entry_id}_service")},
+            name="U-Tec Integration",
+            manufacturer="U-Tec",
+        )
+
+    @property
+    def native_value(self):
+        return self.coordinator.last_push_received

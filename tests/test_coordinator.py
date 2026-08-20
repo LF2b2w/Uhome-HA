@@ -117,6 +117,21 @@ async def test_update_push_data_unrecognised_top_level_type_is_noop(coordinator)
     sw.update_state_data.assert_not_awaited()
 
 
+async def test_update_push_data_stamps_last_push_received(coordinator):
+    """Any authenticated push arrival records a recent UTC timestamp."""
+    from homeassistant.util import dt as dt_util
+
+    assert coordinator.last_push_received is None  # nothing received yet
+
+    before = dt_util.utcnow()
+    # Minimal valid push payload shape (devices list); content irrelevant to the stamp.
+    await coordinator.update_push_data({"payload": {"devices": []}})
+    after = dt_util.utcnow()
+
+    assert coordinator.last_push_received is not None
+    assert before <= coordinator.last_push_received <= after
+
+
 # --- _async_update_data ---
 
 from homeassistant.exceptions import ConfigEntryAuthFailed
