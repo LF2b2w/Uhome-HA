@@ -5,6 +5,7 @@ from types import MappingProxyType
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from homeassistant.const import Platform
 
 from custom_components.u_tec import (
     async_setup_entry,
@@ -12,6 +13,13 @@ from custom_components.u_tec import (
     async_update_options,
 )
 from custom_components.u_tec.const import CONF_PUSH_ENABLED, DOMAIN
+
+
+def test_binary_sensor_platform_is_loaded():
+    """Door sensors must be included in the integration platform set."""
+    from custom_components.u_tec import _PLATFORMS
+
+    assert Platform.BINARY_SENSOR in _PLATFORMS
 from tests.common import make_config_entry
 
 

@@ -148,9 +148,14 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                 continue
 
             handle_type = device_data.get("handleType", "").lower()
+            category = str(device_data.get("category", "")).lower()
             # "dimmer" check must come before "switch" since "utec-dimmer"
             # contains neither "light" nor "switch".
-            if "lock" in handle_type:
+            if (
+                "lock" in handle_type
+                or "lock" in category
+                or handle_type in {"utec-device", "utec-generic"}
+            ):
                 _LOGGER.info("Adding new lock device: %s", device_id)
                 device = Lock(device_data, self.api)
             elif "dimmer" in handle_type or "light" in handle_type or "bulb" in handle_type:
