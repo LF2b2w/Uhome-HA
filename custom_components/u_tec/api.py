@@ -55,16 +55,75 @@ class AsyncPushUpdateHandler:
         self._push_secret: str | None = None
         self.api = api
         self._auth_data = None
+        self._used_cloudhook = False
 
     def _generate_secret(self) -> str:
         """Generate a fresh random secret token for push validation."""
         return secrets.token_urlsafe(32)
 
-    async def async_register_webhook(self, auth_data) -> bool:
-        """Register webhook with Home Assistant and the Uhome API."""
-        self._auth_data = auth_data
+    async def _try_get_cloudhook_url(self) -> str | None:
+        """Return a Nabu Casa cloudhook URL if Cloud is active, else None.
 
-        # Try multiple URL resolution strategies
+        Cloud is imported lazily so loading this module does not pull in the
+        full Cloud → Alexa → camera dependency chain. Unit tests patch this
+        method instead of importing homeassistant.components.cloud.
+        """
+        from homeassistant.components import cloud
+
+        if not cloud.async_active_subscription(self.hass):
+            return None
+
+        try:
+            webhook_url = await cloud.async_get_or_create_cloudhook(
+                self.hass, self.webhook_id
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning(
+                "Cloudhook creation failed, falling back to external URL: %s",
+                err,
+            )
+            return None
+
+        if webhook_url:
+            _LOGGER.debug("Using Nabu Casa cloudhook: %s", webhook_url)
+        return webhook_url or None
+
+    async def _delete_cloudhook(self) -> None:
+        """Best-effort delete of any Nabu Casa cloudhook for this webhook_id.
+
+        Always attempted on unregister (idempotent) so a cloudhook created in a
+        previous process lifetime, or after fallback-then-Cloud-reconnect, is
+        still cleaned up. Lazy-imports cloud to avoid the Alexa/turbojpeg import
+        chain — unit tests patch this method as a seam.
+        """
+        try:
+            from homeassistant.components import cloud
+
+            await cloud.async_delete_cloudhook(self.hass, self.webhook_id)
+            _LOGGER.debug("Deleted cloudhook %s", self.webhook_id)
+        except Exception as err:  # noqa: BLE001
+            # Orphaned hooks on hooks.nabu.casa are otherwise invisible.
+            _LOGGER.warning(
+                "Could not delete cloudhook %s (may already be gone): %s",
+                self.webhook_id,
+                err,
+            )
+
+    async def _resolve_webhook_url(self) -> str | None:
+        """Resolve an externally-reachable webhook URL.
+
+        Prefer a Nabu Casa cloudhook when Home Assistant Cloud is active.
+        Otherwise fall back through network.get_url strategies.
+        """
+        # 1. Prefer a real cloudhook when Nabu Casa is active.
+        cloudhook_url = await self._try_get_cloudhook_url()
+        if cloudhook_url:
+            self._used_cloudhook = True
+            return cloudhook_url
+
+        self._used_cloudhook = False
+
+        # 2. Fall back through network.get_url strategies.
         external_url = None
         for allow_internal, allow_ip, prefer_cloud in [
             (False, False, False),
@@ -81,13 +140,26 @@ class AsyncPushUpdateHandler:
                 if external_url:
                     _LOGGER.debug(
                         "Resolved webhook base URL: %s (internal=%s, cloud=%s)",
-                        external_url, allow_internal, prefer_cloud,
+                        external_url,
+                        allow_internal,
+                        prefer_cloud,
                     )
                     break
             except NoURLAvailableError:
                 continue
 
         if not external_url:
+            return None
+
+        return webhook.async_generate_url(self.hass, self.webhook_id)
+
+    async def async_register_webhook(self, auth_data) -> bool:
+        """Register webhook with Home Assistant and the Uhome API."""
+        self._auth_data = auth_data
+
+        webhook_url = await self._resolve_webhook_url()
+
+        if not webhook_url:
             _LOGGER.error(
                 "No external URL available for push notifications. "
                 "Configure an external URL in Settings -> System -> Network, "
@@ -95,11 +167,17 @@ class AsyncPushUpdateHandler:
             )
             return False
 
-        webhook_url = webhook.async_generate_url(self.hass, self.webhook_id)
-
-        if any(local in webhook_url for local in (
-            "192.168.", "10.", "172.", "homeassistant.local", "localhost", "127.0."
-        )):
+        if not self._used_cloudhook and any(
+            local in webhook_url
+            for local in (
+                "192.168.",
+                "10.",
+                "172.",
+                "homeassistant.local",
+                "localhost",
+                "127.0.",
+            )
+        ):
             _LOGGER.warning(
                 "Webhook URL %s appears to be a local address. "
                 "U-Tec's servers cannot reach it -- push state updates will not work. "
@@ -157,7 +235,15 @@ class AsyncPushUpdateHandler:
         )
 
     async def unregister_webhook(self) -> None:
-        """Unregister the webhook and cancel the re-registration scheduler."""
+        """Unregister the webhook and cancel the re-registration scheduler.
+
+        Always attempts cloudhook deletion (idempotent). HA's
+        ``webhook.async_unregister`` only removes the local handler; without
+        ``cloud.async_delete_cloudhook`` an orphaned hook can remain on
+        hooks.nabu.casa after full config-entry removal. Deletion is not gated
+        on ``_used_cloudhook`` so hooks from a prior process lifetime (or after
+        fallback→Cloud reconnect) are still cleaned up.
+        """
         if self._cancel_reregister:
             self._cancel_reregister()
             self._cancel_reregister = None
@@ -165,6 +251,44 @@ class AsyncPushUpdateHandler:
             webhook.async_unregister(self.hass, self.webhook_id)
             self._unregister_webhook = None
             _LOGGER.debug("Unregistered webhook %s", self.webhook_id)
+
+        await self._delete_cloudhook()
+        self._used_cloudhook = False
+
+    async def _parse_request_body(self, request) -> dict | list:
+        """Parse JSON body from either aiohttp Request or cloud MockRequest.
+
+        Nabu Casa cloudhooks deliver a MockRequest that exposes ``json()`` but
+        not ``read()``. Local webhook deliveries use a full aiohttp Request
+        with both. Prefer ``json()`` when available; fall back to ``read()``.
+
+        Accept both object and array top-level JSON — the coordinator already
+        normalises list-shaped U-Tec push payloads (issue #30).
+        """
+        # Prefer json() — works for cloud MockRequest and aiohttp Request.
+        json_method = getattr(request, "json", None)
+        if callable(json_method):
+            try:
+                data = await json_method()
+                if isinstance(data, (dict, list)):
+                    return data
+            except Exception:  # noqa: BLE001
+                # Fall through to read() path.
+                pass
+
+        read_method = getattr(request, "read", None)
+        if callable(read_method):
+            raw_body = await read_method()
+            if isinstance(raw_body, bytes):
+                data = json.loads(raw_body)
+            elif isinstance(raw_body, str):
+                data = json.loads(raw_body)
+            else:
+                raise ValueError("Request body is not valid JSON")
+            if isinstance(data, (dict, list)):
+                return data
+
+        raise ValueError("Request body is not valid JSON")
 
     async def _handle_webhook(
         self, hass: HomeAssistant, webhook_id, request
@@ -175,19 +299,18 @@ class AsyncPushUpdateHandler:
                 _LOGGER.error("Unsupported method: %s", request.method)
                 return web.Response(status=405)
 
-            raw_body = await request.read()
-            _LOGGER.debug(
-                "Webhook hit received: method=%s headers=%s body=%s",
-                request.method,
-                dict(request.headers),
-                raw_body.decode("utf-8", errors="replace"),
-            )
-
             try:
-                data = json.loads(raw_body)
+                data = await self._parse_request_body(request)
             except Exception as json_err:  # noqa: BLE001
                 _LOGGER.error("Failed to parse webhook JSON: %s", json_err)
                 return web.Response(status=400)
+
+            _LOGGER.debug(
+                "Webhook hit received: method=%s headers=%s data=%s",
+                request.method,
+                dict(getattr(request, "headers", {}) or {}),
+                data,
+            )
 
             # Validate the push secret via the Authorization header.
             # U-Tec sends it as "Bearer <access_token>" in the HTTP header.
@@ -198,7 +321,9 @@ class AsyncPushUpdateHandler:
                     "Webhook received before push secret was initialised -- rejecting"
                 )
                 return web.Response(status=401)
-            auth_header = request.headers.get("Authorization", "")
+            auth_header = (getattr(request, "headers", {}) or {}).get(
+                "Authorization", ""
+            )
             incoming_token = auth_header.removeprefix("Bearer ").strip()
             if not incoming_token:
                 _LOGGER.warning(
@@ -225,6 +350,8 @@ class AsyncPushUpdateHandler:
             return web.json_response({"success": False, "error": str(err)}, status=400)
         except Exception as err:  # noqa: BLE001
             _LOGGER.exception("Unexpected error processing webhook: %s", err)
-            return web.json_response({"success": False, "error": "Internal error"}, status=500)
+            return web.json_response(
+                {"success": False, "error": "Internal error"}, status=500
+            )
         else:
             return web.json_response({"success": True})

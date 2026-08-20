@@ -1,7 +1,7 @@
 """Tests for AsyncPushUpdateHandler.async_register_webhook — URL resolution."""
 
 from datetime import timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.helpers.network import NoURLAvailableError
 from homeassistant.util import dt as dt_util
@@ -9,11 +9,21 @@ from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.u_tec.api import AsyncPushUpdateHandler
 
+# Patch the helper so tests never import homeassistant.components.cloud.
+_TRY_CLOUDHOOK = (
+    "custom_components.u_tec.api.AsyncPushUpdateHandler._try_get_cloudhook_url"
+)
+
+
+def _patch_no_cloud():
+    """Disable the cloudhook path so tests exercise network.get_url fallbacks."""
+    return patch(_TRY_CLOUDHOOK, new_callable=AsyncMock, return_value=None)
+
 
 async def test_register_succeeds_with_external_url(hass, mock_uhome_api):
     h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
 
-    with patch(
+    with _patch_no_cloud(), patch(
         "custom_components.u_tec.api.network.get_url",
         return_value="https://ha.example.com",
     ), patch(
@@ -30,12 +40,64 @@ async def test_register_succeeds_with_external_url(hass, mock_uhome_api):
 
     assert result is True
     mock_uhome_api.set_push_status.assert_awaited_once()
+    assert h._used_cloudhook is False
+
+
+async def test_register_prefers_cloudhook_when_cloud_active(hass, mock_uhome_api):
+    """Cloudhook available → use it, skip network.get_url."""
+    h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
+    cloudhook_url = "https://hooks.nabu.casa/abc123"
+
+    with patch(
+        _TRY_CLOUDHOOK, new_callable=AsyncMock, return_value=cloudhook_url
+    ) as mock_cloudhook, patch(
+        "custom_components.u_tec.api.network.get_url",
+    ) as mock_get_url, patch(
+        "custom_components.u_tec.api.webhook.async_register",
+        return_value=None,
+    ), patch(
+        "custom_components.u_tec.api.async_track_time_interval",
+        return_value=MagicMock(),
+    ):
+        result = await h.async_register_webhook(auth_data=MagicMock())
+
+    assert result is True
+    mock_cloudhook.assert_awaited_once()
+    mock_get_url.assert_not_called()
+    mock_uhome_api.set_push_status.assert_awaited_once()
+    assert mock_uhome_api.set_push_status.await_args.args[0] == cloudhook_url
+    assert h._used_cloudhook is True
+    assert h.webhook_url == cloudhook_url
+
+
+async def test_register_falls_back_when_cloudhook_unavailable(hass, mock_uhome_api):
+    """No cloudhook → fall back to network.get_url."""
+    h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
+
+    with _patch_no_cloud(), patch(
+        "custom_components.u_tec.api.network.get_url",
+        return_value="https://ha.example.com",
+    ), patch(
+        "custom_components.u_tec.api.webhook.async_generate_url",
+        return_value="https://ha.example.com/api/webhook/x",
+    ), patch(
+        "custom_components.u_tec.api.webhook.async_register",
+        return_value=None,
+    ), patch(
+        "custom_components.u_tec.api.async_track_time_interval",
+        return_value=MagicMock(),
+    ):
+        result = await h.async_register_webhook(auth_data=MagicMock())
+
+    assert result is True
+    assert h._used_cloudhook is False
+    mock_uhome_api.set_push_status.assert_awaited_once()
 
 
 async def test_register_fails_when_no_url_available(hass, mock_uhome_api):
     h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
 
-    with patch(
+    with _patch_no_cloud(), patch(
         "custom_components.u_tec.api.network.get_url",
         side_effect=NoURLAvailableError("no external URL configured"),
     ):
@@ -46,7 +108,7 @@ async def test_register_fails_when_no_url_available(hass, mock_uhome_api):
 
 
 async def test_register_falls_back_through_url_strategies(hass, mock_uhome_api):
-    """First strategy fails, second succeeds — cloud fallback path."""
+    """First strategy fails, second succeeds — network fallback path."""
     h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
 
     call_count = [0]
@@ -57,7 +119,7 @@ async def test_register_falls_back_through_url_strategies(hass, mock_uhome_api):
             raise NoURLAvailableError("first strategy unavailable")
         return "https://cloud.example.com"
 
-    with patch(
+    with _patch_no_cloud(), patch(
         "custom_components.u_tec.api.network.get_url", side_effect=_get_url,
     ), patch(
         "custom_components.u_tec.api.webhook.async_generate_url",
@@ -81,7 +143,7 @@ async def test_register_fails_when_api_set_push_status_errors(hass, mock_uhome_a
     h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
     mock_uhome_api.set_push_status.side_effect = ApiError(500, "fail")
 
-    with patch(
+    with _patch_no_cloud(), patch(
         "custom_components.u_tec.api.network.get_url",
         return_value="https://ha.example.com",
     ), patch(
@@ -102,7 +164,7 @@ async def test_register_fails_when_api_set_push_status_errors(hass, mock_uhome_a
 async def test_register_generates_new_secret_each_call(hass, mock_uhome_api):
     h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
 
-    with patch(
+    with _patch_no_cloud(), patch(
         "custom_components.u_tec.api.network.get_url",
         return_value="https://ha.example.com",
     ), patch(
@@ -155,7 +217,7 @@ async def test_register_twice_does_not_re_register_handler(hass, mock_uhome_api)
     """
     h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
 
-    with patch(
+    with _patch_no_cloud(), patch(
         "custom_components.u_tec.api.network.get_url",
         return_value="https://ha.example.com",
     ), patch(
@@ -184,7 +246,7 @@ async def test_24h_reregister_timer_does_not_raise(hass, mock_uhome_api):
     """
     h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
 
-    with patch(
+    with _patch_no_cloud(), patch(
         "custom_components.u_tec.api.network.get_url",
         return_value="https://ha.example.com",
     ), patch(
