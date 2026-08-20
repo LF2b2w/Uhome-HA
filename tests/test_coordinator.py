@@ -245,6 +245,30 @@ async def test_discover_skips_unknown_handle_type(coordinator, mock_uhome_api):
     assert "M1" not in coordinator.devices
 
 
+async def test_discover_creates_lock_when_state_reports_door_sensor(
+    coordinator, mock_uhome_api
+):
+    """A generic discovery handle can still identify a lock from its state."""
+    mock_uhome_api.discover_devices.return_value = {
+        "payload": {"devices": [_discovery("utec-device", "L2")]}
+    }
+    mock_uhome_api.get_device_state.return_value = {
+        "payload": {"devices": [{
+            "id": "L2",
+            "states": [
+                {"capability": "st.lock", "name": "lockState", "value": "Locked"},
+                {"capability": "st.DoorSensor", "name": "sensorState", "value": "Closed"},
+            ],
+        }]}
+    }
+
+    await coordinator.async_discover_devices()
+
+    assert isinstance(coordinator.devices["L2"], UhomeLock)
+    assert coordinator.devices["L2"].has_door_sensor is True
+    assert coordinator.devices["L2"].door_state == "Closed"
+
+
 # --- async_discover_devices: edge cases ---
 
 
