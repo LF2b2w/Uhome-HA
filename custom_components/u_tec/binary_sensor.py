@@ -11,9 +11,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from utec_py.devices.lock import Lock as UhomeLock
 
-from .const import DOMAIN
+from .const import DOMAIN, SIGNAL_NEW_DEVICE
 from .coordinator import UhomeDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -26,11 +27,27 @@ async def async_setup_entry(
     """Set up Uhome door sensors based on a config entry."""
     coordinator: UhomeDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
-    # Add door sensors for locks that have them
-    async_add_entities(
-        UhomeDoorSensor(coordinator, device_id)
-        for device_id, device in coordinator.devices.items()
-        if isinstance(device, UhomeLock) and device.has_door_sensor
+    added_entity_ids: set[str] = set()
+
+    def _create_entities(add_only_new: bool = False) -> list[UhomeDoorSensor]:
+        entities = []
+        for device_id, device in coordinator.devices.items():
+            if not isinstance(device, UhomeLock) or not device.has_door_sensor:
+                continue
+            unique_id = f"{DOMAIN}_door_{device_id}"
+            if add_only_new and unique_id in added_entity_ids:
+                continue
+            entities.append(UhomeDoorSensor(coordinator, device_id))
+            added_entity_ids.add(unique_id)
+        return entities
+
+    async_add_entities(_create_entities())
+
+    def _async_add_new_entities() -> None:
+        async_add_entities(_create_entities(add_only_new=True))
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, SIGNAL_NEW_DEVICE, _async_add_new_entities)
     )
 
 
@@ -61,8 +78,4 @@ class UhomeDoorSensor(CoordinatorEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         """Return true if the door is open."""
-        return (
-            not self._device.is_door_closed
-            if self._device.is_door_closed is not None
-            else None
-        )
+        return self._device.is_door_open
