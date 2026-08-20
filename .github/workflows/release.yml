@@ -1,0 +1,158 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable integration version (X.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject non-main dispatches
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "Releases must be dispatched from refs/heads/main" >&2
+          exit 1
+
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test requirements
+        run: python -m pip install -r requirements-test.txt
+
+      - name: Validate version
+        id: version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          VERSION="$(python scripts/release.py validate "$RELEASE_VERSION")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=u-tec-v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Read baseline version
+        id: baseline
+        run: |
+          VERSION="$(python scripts/release.py manifest-version custom_components/u_tec/manifest.json)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Check version ordering
+        env:
+          REQUESTED_VERSION: ${{ steps.version.outputs.version }}
+          CURRENT_VERSION: ${{ steps.baseline.outputs.version }}
+        run: |
+          COMPARISON="$(python scripts/release.py compare "$REQUESTED_VERSION" "$CURRENT_VERSION")"
+          if [ "$COMPARISON" -lt 0 ]; then
+            echo "Requested version $REQUESTED_VERSION is lower than current manifest version $CURRENT_VERSION" >&2
+            exit 1
+          fi
+
+      - name: Apply candidate manifest version
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cp custom_components/u_tec/manifest.json "$RUNNER_TEMP/manifest.baseline.json"
+          python scripts/release.py update-manifest custom_components/u_tec/manifest.json "$RELEASE_VERSION"
+          cp custom_components/u_tec/manifest.json "$RUNNER_TEMP/manifest.candidate.json"
+          python scripts/release.py check-candidate \
+            "$RUNNER_TEMP/manifest.baseline.json" \
+            "$RUNNER_TEMP/manifest.candidate.json" \
+            "$RELEASE_VERSION"
+
+      - name: Run tests against candidate
+        run: pytest --cov --cov-report=term-missing
+
+      - name: Check main has not changed
+        env:
+          BASELINE_COMMIT: ${{ steps.baseline.outputs.commit }}
+        run: |
+          git fetch origin main --quiet
+          test "$(git rev-parse origin/main)" = "$BASELINE_COMMIT" || {
+            echo "main changed while the release was being prepared; retry" >&2
+            exit 1
+          }
+
+      - name: Create candidate commit
+        if: steps.version.outputs.version != steps.baseline.outputs.version
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add custom_components/u_tec/manifest.json
+          git diff --cached --check
+          git commit -m "chore: release u-tec v$RELEASE_VERSION"
+
+      - name: Check remote tag state
+        id: tag_state
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          TAG_OBJECT="$(git ls-remote origin "refs/tags/$RELEASE_TAG" | cut -f1)"
+          PEELED_COMMIT="$(git ls-remote origin "refs/tags/$RELEASE_TAG^{}" | cut -f1)"
+          CANDIDATE_COMMIT="$(git rev-parse HEAD)"
+          STATE="$(python scripts/release.py tag-state "${TAG_OBJECT:-}" "${PEELED_COMMIT:-}" "$CANDIDATE_COMMIT")"
+          echo "state=$STATE" >> "$GITHUB_OUTPUT"
+          echo "candidate=$CANDIDATE_COMMIT" >> "$GITHUB_OUTPUT"
+          if [ "$STATE" = "CONFLICT" ] || [ "$STATE" = "LIGHTWEIGHT_OR_MALFORMED" ]; then
+            echo "Remote tag $RELEASE_TAG is not a matching annotated tag" >&2
+            exit 1
+          fi
+          if [ "$STATE" = "ABSENT" ] && [ "${{ steps.version.outputs.version }}" = "${{ steps.baseline.outputs.version }}" ]; then
+            echo "equal version requires an existing matching tag for recovery" >&2
+            exit 1
+          fi
+
+      - name: Push main and annotated tag atomically
+        if: steps.tag_state.outputs.state == 'ABSENT'
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git tag -a "$RELEASE_TAG" -m "Release $RELEASE_TAG"
+          git push --atomic origin HEAD:main "$RELEASE_TAG"
+
+      - name: Inspect existing release
+        id: release_state
+        if: steps.tag_state.outputs.state == 'MATCHING'
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RELEASE_JSON="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease 2>/dev/null || true)"
+          STATE="$(printf '%s' "$RELEASE_JSON" | python scripts/release.py release-state "$RELEASE_TAG")"
+          echo "state=$STATE" >> "$GITHUB_OUTPUT"
+          if [ "$STATE" = "INVALID" ]; then
+            echo "Existing release is draft, prerelease, or mismatched" >&2
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        if: steps.tag_state.outputs.state == 'ABSENT' || steps.release_state.outputs.state == 'ABSENT'
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag
