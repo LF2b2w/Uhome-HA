@@ -21,6 +21,7 @@ from .const import (
     DOMAIN,
     OPTIMISTIC_TIMEOUT,
     SIGNAL_DEVICE_UPDATE,
+    is_adaptive_aggressive_enabled,
     is_optimistic_enabled,
     push_asserts_state,
 )
@@ -135,6 +136,17 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
             self._device.device_id,
         )
 
+    def _start_adaptive_if_enabled(self, expected_locked: bool) -> None:
+        """Kick an Adaptive Aggressive confirmation burst after a command."""
+        if self._device.lock_mode == PASSAGE_MODE:
+            return
+        if not is_adaptive_aggressive_enabled(
+            self.coordinator.config_entry.options,
+            self._device.device_id,
+        ):
+            return
+        self.coordinator.start_adaptive_poll(self._device.device_id, expected_locked)
+
     @property
     def available(self) -> bool:
         """Return True if entity is available.
@@ -216,6 +228,7 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         _LOGGER.debug("Locking device %s", self._device.device_id)
         try:
             await self._device.lock()
+            self._start_adaptive_if_enabled(True)
             if self._is_optimistic():
                 self._optimistic_is_locked = True
                 self._optimistic_set_at = dt_util.utcnow()
@@ -245,6 +258,7 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         _LOGGER.debug("Unlocking device %s", self._device.device_id)
         try:
             await self._device.unlock()
+            self._start_adaptive_if_enabled(False)
             if self._is_optimistic():
                 self._optimistic_is_locked = False
                 self._optimistic_set_at = dt_util.utcnow()

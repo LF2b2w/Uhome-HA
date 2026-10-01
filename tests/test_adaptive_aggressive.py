@@ -1,0 +1,194 @@
+"""Adaptive Aggressive confirmation bursts.
+
+The timer math and stop rules do not need a running Home Assistant. The
+poller is driven by stubbing async_call_later and invoking the saved callback.
+"""
+
+from datetime import timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from custom_components.u_tec.adaptive import AdaptivePoller, next_fibonacci_delay
+from custom_components.u_tec.const import (
+    ADAPTIVE_AGGRESSIVE_INITIAL_DELAY,
+    ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS,
+)
+from custom_components.u_tec.optimistic import (
+    CONF_ADAPTIVE_AGGRESSIVE_LOCKS,
+    DEFAULT_ADAPTIVE_AGGRESSIVE,
+    is_adaptive_aggressive_enabled,
+)
+
+
+def test_default_is_off():
+    assert DEFAULT_ADAPTIVE_AGGRESSIVE is False
+    assert is_adaptive_aggressive_enabled({}, "lock-1") is False
+
+
+def test_true_enables_every_lock():
+    options = {CONF_ADAPTIVE_AGGRESSIVE_LOCKS: True}
+    assert is_adaptive_aggressive_enabled(options, "lock-1") is True
+
+
+def test_list_enables_only_listed_locks():
+    options = {CONF_ADAPTIVE_AGGRESSIVE_LOCKS: ["lock-2"]}
+    assert is_adaptive_aggressive_enabled(options, "lock-1") is False
+    assert is_adaptive_aggressive_enabled(options, "lock-2") is True
+
+
+def test_fibonacci_sequence_is_1_2_3_5_8():
+    delay = ADAPTIVE_AGGRESSIVE_INITIAL_DELAY
+    prev = delay
+    seen = [delay]
+    for _ in range(4):
+        nxt = next_fibonacci_delay(delay, prev)
+        seen.append(nxt)
+        prev, delay = delay, nxt
+    assert seen == [1, 2, 3, 5, 8]
+
+
+def _coordinator(idle=20):
+    coord = MagicMock()
+    coord.update_interval = timedelta(seconds=idle)
+    coord.hass = MagicMock()
+    coord.devices = {}
+    coord.data = {}
+    coord.consecutive_update_failures = 0
+    coord.api.get_device_state = AsyncMock()
+    return coord
+
+
+@pytest.fixture
+def scheduled():
+    calls = []
+
+    def fake_call_later(hass, delay, action):
+        entry = {"delay": delay, "action": action, "cancelled": False}
+
+        def cancel():
+            entry["cancelled"] = True
+
+        calls.append(entry)
+        return cancel
+
+    with (
+        patch("custom_components.u_tec.adaptive.async_call_later", fake_call_later),
+        patch("custom_components.u_tec.adaptive.async_dispatcher_send"),
+    ):
+        yield calls
+
+
+async def _fire(entry):
+    await entry["action"](None)
+
+
+def test_start_schedules_initial_delay(scheduled):
+    coord = _coordinator()
+    poller = AdaptivePoller(coord)
+    poller.start("lock-1", True)
+    assert scheduled[0]["delay"] == 1
+    assert "lock-1" in poller._bursts
+
+
+def test_start_refuses_when_idle_is_not_longer_than_initial(scheduled):
+    coord = _coordinator(idle=1)
+    poller = AdaptivePoller(coord)
+    poller.start("lock-1", True)
+    assert scheduled == []
+    assert poller._bursts == {}
+
+
+async def test_confirms_and_stops(scheduled):
+    coord = _coordinator()
+    device = MagicMock()
+    device.is_locked = False
+    device.get_state_data.return_value = {"st.lock": {"lockState": "Unlocked"}}
+    coord.devices["lock-1"] = device
+    coord.api.get_device_state.return_value = {
+        "payload": {"devices": [{"id": "lock-1"}]}
+    }
+
+    async def _update(data):
+        device.is_locked = True
+        device.get_state_data.return_value = {"st.lock": {"lockState": "Locked"}}
+
+    device.update_state_data = AsyncMock(side_effect=_update)
+
+    poller = AdaptivePoller(coord)
+    poller.start("lock-1", True)
+    await _fire(scheduled[0])
+
+    assert "lock-1" not in poller._bursts
+    coord.async_set_updated_data.assert_called_once()
+    assert scheduled[0]["cancelled"] is False
+
+
+async def test_fibonacci_reschedule_until_max_attempts(scheduled):
+    coord = _coordinator(idle=60)
+    device = MagicMock()
+    device.is_locked = False
+    device.get_state_data.return_value = {}
+    device.update_state_data = AsyncMock()
+    coord.devices["lock-1"] = device
+    coord.api.get_device_state.return_value = {
+        "payload": {"devices": [{"id": "lock-1"}]}
+    }
+
+    poller = AdaptivePoller(coord)
+    poller.start("lock-1", True)
+    delays = [scheduled[0]["delay"]]
+    for _ in range(ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS):
+        await _fire(scheduled[-1])
+        if scheduled[-1] is not scheduled[0] or len(scheduled) > 1:
+            pass
+        if "lock-1" not in poller._bursts:
+            break
+        delays.append(scheduled[-1]["delay"])
+
+    assert delays == [1, 2, 3, 5, 8]
+    assert "lock-1" not in poller._bursts
+
+
+async def test_stops_when_next_delay_would_meet_idle(scheduled):
+    coord = _coordinator(idle=4)
+    device = MagicMock()
+    device.is_locked = False
+    device.get_state_data.return_value = {}
+    device.update_state_data = AsyncMock()
+    coord.devices["lock-1"] = device
+    coord.api.get_device_state.return_value = {
+        "payload": {"devices": [{"id": "lock-1"}]}
+    }
+
+    poller = AdaptivePoller(coord)
+    poller.start("lock-1", True)
+    await _fire(scheduled[0])  # 1s, next would be 2
+    assert "lock-1" in poller._bursts
+    await _fire(scheduled[-1])  # 2s, next would be 3
+    assert "lock-1" in poller._bursts
+    await _fire(scheduled[-1])  # 3s, next would be 5 >= 4
+    assert "lock-1" not in poller._bursts
+
+
+def test_push_match_cancels_burst(scheduled):
+    coord = _coordinator()
+    device = MagicMock()
+    device.is_locked = True
+    coord.devices["lock-1"] = device
+    poller = AdaptivePoller(coord)
+    poller.start("lock-1", True)
+    poller.cancel_if_confirmed("lock-1", device, reason="push")
+    assert "lock-1" not in poller._bursts
+    assert scheduled[0]["cancelled"] is True
+
+
+def test_push_mismatch_leaves_burst_running(scheduled):
+    coord = _coordinator()
+    device = MagicMock()
+    device.is_locked = False
+    poller = AdaptivePoller(coord)
+    poller.start("lock-1", True)
+    poller.cancel_if_confirmed("lock-1", device, reason="push")
+    assert "lock-1" in poller._bursts
+    assert scheduled[0]["cancelled"] is False

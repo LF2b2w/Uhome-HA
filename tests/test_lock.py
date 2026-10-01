@@ -713,3 +713,86 @@ async def test_passage_mode_lock_emits_real_state_event(coord_with_lock, hass):
     matching = [e for e in events if e.data["entity_id"] == "lock.fake_lock"]
     assert matching, "an identical state must still emit state_changed when forced"
     assert matching[0].data["new_state"].state == before.state
+
+
+
+async def test_async_lock_starts_adaptive_when_enabled(hass):
+    from custom_components.u_tec.optimistic import CONF_ADAPTIVE_AGGRESSIVE_LOCKS
+
+    entry = make_config_entry(options={CONF_ADAPTIVE_AGGRESSIVE_LOCKS: True})
+    entry.add_to_hass(hass)
+    lock = make_fake_lock("lock-1", is_locked=False)
+    coord = MagicMock()
+    coord.devices = {"lock-1": lock}
+    coord.config_entry = entry
+    coord.last_update_success = True
+    coord.consecutive_update_failures = 0
+    coord.poll_healthy_enough = True
+    coord.data = {}
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = hass
+    ent.entity_id = "lock.fake_lock"
+    ent.async_write_ha_state = MagicMock()
+
+    await ent.async_lock()
+
+    coord.start_adaptive_poll.assert_called_once_with("lock-1", True)
+
+
+async def test_async_unlock_starts_adaptive_when_enabled(hass):
+    from custom_components.u_tec.optimistic import CONF_ADAPTIVE_AGGRESSIVE_LOCKS
+
+    entry = make_config_entry(options={CONF_ADAPTIVE_AGGRESSIVE_LOCKS: True})
+    entry.add_to_hass(hass)
+    lock = make_fake_lock("lock-1", is_locked=True)
+    coord = MagicMock()
+    coord.devices = {"lock-1": lock}
+    coord.config_entry = entry
+    coord.last_update_success = True
+    coord.consecutive_update_failures = 0
+    coord.poll_healthy_enough = True
+    coord.data = {}
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = hass
+    ent.entity_id = "lock.fake_lock"
+    ent.async_write_ha_state = MagicMock()
+
+    await ent.async_unlock()
+
+    coord.start_adaptive_poll.assert_called_once_with("lock-1", False)
+
+
+async def test_passage_mode_does_not_start_adaptive(hass):
+    from custom_components.u_tec.optimistic import CONF_ADAPTIVE_AGGRESSIVE_LOCKS
+
+    entry = make_config_entry(options={CONF_ADAPTIVE_AGGRESSIVE_LOCKS: True})
+    entry.add_to_hass(hass)
+    lock = make_fake_lock("lock-1", is_locked=False)
+    lock.lock_mode = PASSAGE_MODE
+    coord = MagicMock()
+    coord.devices = {"lock-1": lock}
+    coord.config_entry = entry
+    coord.last_update_success = True
+    coord.consecutive_update_failures = 0
+    coord.poll_healthy_enough = True
+    coord.data = {}
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = hass
+    ent.entity_id = "lock.fake_lock"
+    ent.async_write_ha_state = MagicMock()
+
+    await ent.async_lock()
+
+    coord.start_adaptive_poll.assert_not_called()
+
+
+async def test_adaptive_off_does_not_start_burst(coord_with_lock, hass):
+    coord, lock = coord_with_lock
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = hass
+    ent.entity_id = "lock.fake_lock"
+    ent.async_write_ha_state = MagicMock()
+
+    await ent.async_lock()
+
+    coord.start_adaptive_poll.assert_not_called()

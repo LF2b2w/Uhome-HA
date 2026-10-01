@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 import logging
 
+from custom_components.u_tec.adaptive import AdaptivePoller
 from custom_components.u_tec.const import (
     DEFAULT_DISCOVERY_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
@@ -81,6 +82,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         self.push_devices = []
         self.blacklisted_devices = []
         self.last_push_received: datetime | None = None
+        self.adaptive = AdaptivePoller(self)
         self._discovery_interval = timedelta(seconds=discovery_interval)
         self._cancel_discovery: callable | None = None
         # Consecutive failed polls. Entities stay available through a single
@@ -119,6 +121,22 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         if self._cancel_discovery:
             self._cancel_discovery()
             self._cancel_discovery = None
+
+    def async_stop_adaptive_polls(self) -> None:
+        """Cancel in-flight Adaptive Aggressive bursts."""
+        self.adaptive.cancel_all("unload")
+
+    def raise_for_error_payload(self, response) -> None:
+        """Surface a U-Tec error envelope. Used by Adaptive Aggressive polls."""
+        _raise_for_error_payload(response)
+
+    def start_adaptive_poll(self, device_id: str, expected_locked: bool) -> None:
+        """Start a confirmation burst for one lock."""
+        self.adaptive.start(device_id, expected_locked)
+
+    def cancel_adaptive_poll(self, device_id: str, reason: str) -> None:
+        """Stop a confirmation burst."""
+        self.adaptive.cancel(device_id, reason)
 
     async def async_discover_devices(self) -> None:
         """Discover devices and register any new ones. Does not update state."""
@@ -208,7 +226,9 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                 for device_data in response["payload"].get("devices", []):
                     device_id = device_data.get("id")
                     if device_id and device_id in self.devices:
-                        await self.devices[device_id].update_state_data(device_data)
+                        device = self.devices[device_id]
+                        await device.update_state_data(device_data)
+                        self.adaptive.cancel_if_confirmed(device_id, device)
 
             self.consecutive_update_failures = 0
             return {
@@ -310,6 +330,10 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                         f"{SIGNAL_DEVICE_UPDATE}_{device_id}",
                         device.get_state_data(),
                     )
+                    # A push that actually matches the commanded state wins
+                    # over the confirmation burst. A partial push (battery,
+                    # door) that does not match leaves the burst running.
+                    self.adaptive.cancel_if_confirmed(device_id, device, reason="push")
                 else:
                     _LOGGER.debug(
                         "Received update for unknown device: %s", device_id

@@ -3,10 +3,13 @@
 from datetime import timedelta
 
 from .optimistic import (
+    CONF_ADAPTIVE_AGGRESSIVE_LOCKS,
     CONF_OPTIMISTIC_LIGHTS,
     CONF_OPTIMISTIC_SWITCHES,
     CONF_OPTIMISTIC_LOCKS,
+    DEFAULT_ADAPTIVE_AGGRESSIVE,
     DEFAULT_OPTIMISTIC,
+    is_adaptive_aggressive_enabled,
     is_optimistic_enabled,
     push_asserts_state,
 )
@@ -35,6 +38,13 @@ DEFAULT_SCAN_INTERVAL = 10  # seconds
 DEFAULT_DISCOVERY_INTERVAL = 300  # seconds (5 minutes)
 MIN_SCAN_INTERVAL = 10
 MAX_SCAN_INTERVAL = 3600
+
+# Adaptive Aggressive lock confirmation. After a lock/unlock command, poll
+# that one device on a Fibonacci delay (1, 2, 3, 5, 8s) until the API
+# reports the commanded state. Cap at 5 attempts and never schedule a
+# delay >= the idle scan interval.
+ADAPTIVE_AGGRESSIVE_INITIAL_DELAY = 1
+ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS = 5
 
 # Key used inside hass.data[DOMAIN] for yaml-sourced config (separate from entry IDs).
 YAML_CONFIG_KEY = "_yaml_config"
