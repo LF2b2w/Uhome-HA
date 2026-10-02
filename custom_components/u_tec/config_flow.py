@@ -66,20 +66,22 @@ OPTIMISTIC_MODE_CUSTOM = "custom"
 OPTIMISTIC_MODES = [OPTIMISTIC_MODE_ALL, OPTIMISTIC_MODE_NONE, OPTIMISTIC_MODE_CUSTOM]
 
 
-def _current_mode(value: bool | list[str] | None) -> str:
-    """Infer the mode selector default from a stored option value."""
-    if value is True or value is None:
-        return OPTIMISTIC_MODE_ALL
-    if value is False:
-        return OPTIMISTIC_MODE_NONE
-    return OPTIMISTIC_MODE_CUSTOM
+def _current_mode(
+    value: bool | list[str] | None,
+    *,
+    absent: str = OPTIMISTIC_MODE_ALL,
+) -> str:
+    """Infer the mode selector default from a stored option value.
 
-
-def _current_adaptive_mode(value: bool | list[str] | None) -> str:
-    """Infer Adaptive Aggressive mode. Absent means off, not all."""
+    ``absent`` is load-bearing. Optimistic updates default on. Adaptive
+    Aggressive defaults off. Unifying these without the argument would turn
+    confirmation bursts on for every lock.
+    """
+    if value is None:
+        return absent
     if value is True:
         return OPTIMISTIC_MODE_ALL
-    if value is False or value is None:
+    if value is False:
         return OPTIMISTIC_MODE_NONE
     return OPTIMISTIC_MODE_CUSTOM
 
@@ -569,8 +571,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 {
                     vol.Required(
                         "locks_mode",
-                        default=_current_adaptive_mode(
-                            self.options.get(CONF_ADAPTIVE_AGGRESSIVE_LOCKS)
+                        default=_current_mode(
+                            self.options.get(CONF_ADAPTIVE_AGGRESSIVE_LOCKS),
+                            absent=OPTIMISTIC_MODE_NONE,
                         ),
                     ): mode_selector,
                 }
@@ -640,7 +643,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         if user_input is not None:
             return self.async_create_entry(
-                title="", data={"devices": user_input["selected_devices"]}
+                title="",
+                data={**self.options, "devices": user_input["selected_devices"]},
             )
 
         return self.async_show_form(

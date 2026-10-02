@@ -20,6 +20,7 @@ from .const import (
     CONF_OPTIMISTIC_LOCKS,
     DOMAIN,
     OPTIMISTIC_TIMEOUT,
+    SIGNAL_ADAPTIVE_POLL,
     SIGNAL_DEVICE_UPDATE,
     is_adaptive_aggressive_enabled,
     is_optimistic_enabled,
@@ -278,6 +279,23 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
                 self._handle_push_update,
             )
         )
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                f"{SIGNAL_ADAPTIVE_POLL}_{self._device.device_id}",
+                self._handle_adaptive_poll,
+            )
+        )
+
+    @callback
+    def _handle_adaptive_poll(self, _poll_data):
+        """Apply a burst poll without the immediate optimistic clear of a push.
+
+        Burst polls are fresh API reads, not pushes. Clearing optimism on the
+        first mismatch would flicker locked→unlocked→locked while the bolt moves.
+        The coordinator grace period still applies.
+        """
+        self._handle_coordinator_update()
 
     @callback
     def _handle_push_update(self, push_data):

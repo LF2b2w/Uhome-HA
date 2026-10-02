@@ -178,12 +178,13 @@ async def test_optimistic_none_skips_picker(hass):
 
 
 def test_current_adaptive_mode_defaults_off():
-    from custom_components.u_tec.config_flow import _current_adaptive_mode
+    from custom_components.u_tec.config_flow import _current_mode
 
-    assert _current_adaptive_mode(None) == "none"
-    assert _current_adaptive_mode(False) == "none"
-    assert _current_adaptive_mode(True) == "all"
-    assert _current_adaptive_mode(["lock-1"]) == "custom"
+    assert _current_mode(None, absent="none") == "none"
+    assert _current_mode(False, absent="none") == "none"
+    assert _current_mode(True, absent="none") == "all"
+    assert _current_mode(["lock-1"], absent="none") == "custom"
+    assert _current_mode(None) == "all"
 
 
 async def test_init_menu_includes_adaptive_aggressive(hass):

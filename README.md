@@ -28,7 +28,11 @@ Adaptive Aggressive fills that gap **only after a lock or unlock command from Ho
 1. The command is sent as usual.
 2. A one-device confirmation burst starts: poll at **1s, then 2s, 3s, 5s, 8s** (Fibonacci).
 3. The burst stops as soon as the API reports the commanded state, a push arrives that matches that state, 5 attempts are used, or the next delay would be ≥ the idle poll interval.
-4. Idle polling for every other device stays at the configured interval. Lights and switches are not burst-polled. Passage mode is skipped (the lock ignores the command).
+4. Idle polling for every other device stays at the configured interval. Lights and switches are not burst-polled.
+
+A confirmed burst is remembered for one idle interval, capped at 60 seconds. A later poll or push that contradicts that confirmation is not applied. The burst is re-armed and the fresh poll wins, so a stale cloud read cannot undo a lock, and a real bolt failure is not hidden. A battery or door push does not confirm a burst: the payload has to carry `st.lock`.
+
+If the burst gives up, the integration logs a warning and fires `u_tec_lock_command_failed`. Burst polls use their own signal, so optimistic lock updates keep the existing grace period instead of flickering on the first poll. Passage mode is skipped (the lock ignores the command).
 
 The option is **off until you turn it on** (Configure → Adaptive Aggressive). Burst progress is logged at `debug` under `custom_components.u_tec`.
 

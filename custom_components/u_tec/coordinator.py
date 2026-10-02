@@ -134,9 +134,16 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         """Start a confirmation burst for one lock."""
         self.adaptive.start(device_id, expected_locked)
 
-    def cancel_adaptive_poll(self, device_id: str, reason: str) -> None:
-        """Stop a confirmation burst."""
-        self.adaptive.cancel(device_id, reason)
+    def _defer_contradicting_report(self, device_id: str, state_data) -> bool:
+        """Hold a report that contradicts a young confirmation and re-poll.
+
+        Returns True when the caller must not apply this payload. The re-armed
+        burst fetches fresh evidence and that result wins.
+        """
+        if not self.adaptive.contradicts_confirmation(device_id, state_data):
+            return False
+        self.adaptive.rearm_for_confirmation(device_id)
+        return True
 
     async def async_discover_devices(self) -> None:
         """Discover devices and register any new ones. Does not update state."""
@@ -227,8 +234,14 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     device_id = device_data.get("id")
                     if device_id and device_id in self.devices:
                         device = self.devices[device_id]
+                        if self._defer_contradicting_report(device_id, device_data):
+                            continue
                         await device.update_state_data(device_data)
-                        self.adaptive.cancel_if_confirmed(device_id, device)
+                        self.adaptive.cancel_if_confirmed(
+                            device_id,
+                            device,
+                            state_data=device_data,
+                        )
 
             self.consecutive_update_failures = 0
             return {
@@ -307,7 +320,25 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     _LOGGER.warning("Device ID missing in push update")
                     continue
 
-                # Check if this device should receive push updates
+                if device_id not in self.devices:
+                    _LOGGER.debug(
+                        "Received update for unknown device: %s", device_id
+                    )
+                    continue
+
+                device = self.devices[device_id]
+                if self._defer_contradicting_report(device_id, device_data):
+                    continue
+
+                # A confirming push stops the burst even when this lock is
+                # excluded from push selection. Applying the payload still
+                # respects that filter.
+                self.adaptive.cancel_if_confirmed(
+                    device_id,
+                    device,
+                    reason="push",
+                    state_data=device_data,
+                )
                 if self.push_devices and device_id not in self.push_devices:
                     _LOGGER.debug(
                         "Skipping push update for device %s (not in selected devices)",
@@ -315,29 +346,19 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     )
                     continue
 
-                if device_id in self.devices:
-                    device = self.devices[device_id]
-                    await device.update_state_data(device_data)
+                await device.update_state_data(device_data)
 
-                    _LOGGER.debug(
-                        "Updated device %s with push data: %s",
-                        device_id,
-                        device_data,
-                    )
+                _LOGGER.debug(
+                    "Updated device %s with push data: %s",
+                    device_id,
+                    device_data,
+                )
 
-                    async_dispatcher_send(
-                        self.hass,
-                        f"{SIGNAL_DEVICE_UPDATE}_{device_id}",
-                        device.get_state_data(),
-                    )
-                    # A push that actually matches the commanded state wins
-                    # over the confirmation burst. A partial push (battery,
-                    # door) that does not match leaves the burst running.
-                    self.adaptive.cancel_if_confirmed(device_id, device, reason="push")
-                else:
-                    _LOGGER.debug(
-                        "Received update for unknown device: %s", device_id
-                    )
+                async_dispatcher_send(
+                    self.hass,
+                    f"{SIGNAL_DEVICE_UPDATE}_{device_id}",
+                    device.get_state_data(),
+                )
 
             # A successful authenticated push proves the channel is alive —
             # reset the poll-failure counter so entities stay available during

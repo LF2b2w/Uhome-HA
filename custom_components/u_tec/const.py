@@ -61,6 +61,10 @@ API_BASE_URL = "https://api.u-tec.com/action"
 
 SIGNAL_NEW_DEVICE = f"{DOMAIN}_new_device"
 SIGNAL_DEVICE_UPDATE = f"{DOMAIN}_device_update"
+# Burst polls are not pushes. Listeners must not clear optimistic state
+# immediately when this fires; that grace stays on the coordinator path.
+SIGNAL_ADAPTIVE_POLL = f"{DOMAIN}_adaptive_poll"
+EVENT_LOCK_COMMAND_FAILED = f"{DOMAIN}_lock_command_failed"
 
 WEBHOOK_ID_PREFIX = "u_tec_push_"
 WEBHOOK_HANDLER = 'u_tec_webhook_handler'

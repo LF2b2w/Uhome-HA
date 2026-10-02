@@ -19,6 +19,19 @@ CONF_ADAPTIVE_AGGRESSIVE_LOCKS = "adaptive_aggressive_locks"
 DEFAULT_ADAPTIVE_AGGRESSIVE = False
 
 
+def option_enabled(
+    options: Mapping[str, Any],
+    conf_key: str,
+    device_id: str,
+    default: bool,
+) -> bool:
+    """Resolve a True / False / list[device_id] option for one device."""
+    value = options.get(conf_key, default)
+    if isinstance(value, bool):
+        return value
+    return device_id in value
+
+
 def is_optimistic_enabled(
     options: Mapping[str, Any],
     conf_key: str,
@@ -32,10 +45,7 @@ def is_optimistic_enabled(
       - False   -> no devices of this type optimistic
       - list    -> only listed device IDs optimistic
     """
-    value = options.get(conf_key, DEFAULT_OPTIMISTIC)
-    if isinstance(value, bool):
-        return value
-    return device_id in value
+    return option_enabled(options, conf_key, device_id, DEFAULT_OPTIMISTIC)
 
 
 def is_adaptive_aggressive_enabled(
@@ -47,10 +57,12 @@ def is_adaptive_aggressive_enabled(
     Same shape as the optimistic options: absent/False off, True all locks,
     list only the listed device IDs. Absent defaults to off.
     """
-    value = options.get(CONF_ADAPTIVE_AGGRESSIVE_LOCKS, DEFAULT_ADAPTIVE_AGGRESSIVE)
-    if isinstance(value, bool):
-        return value
-    return device_id in value
+    return option_enabled(
+        options,
+        CONF_ADAPTIVE_AGGRESSIVE_LOCKS,
+        device_id,
+        DEFAULT_ADAPTIVE_AGGRESSIVE,
+    )
 
 
 def push_asserts_state(push_data: Any, capability: str, attribute: str) -> bool:

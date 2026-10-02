@@ -6,24 +6,38 @@ tested without loading lock.py. The coordinator owns one AdaptivePoller.
 After a lock or unlock command, poll only that device on a Fibonacci delay
 (1, 2, 3, 5, 8 seconds) until the API reports the commanded state. Stop at
 5 attempts, or when the next delay would be >= the idle scan interval.
+
+A confirmed burst records a watermark. A later poll or push that contradicts
+that watermark inside one idle interval (capped at 60s) is not applied.
+Instead the burst is re-armed and the fresh poll wins, so a stale cloud
+read cannot silently undo a lock, and a real bolt failure is not hidden.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
+from homeassistant.util import dt as dt_util
 
 from .const import (
     ADAPTIVE_AGGRESSIVE_INITIAL_DELAY,
     ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS,
     DEFAULT_SCAN_INTERVAL,
-    SIGNAL_DEVICE_UPDATE,
+    EVENT_LOCK_COMMAND_FAILED,
+    SIGNAL_ADAPTIVE_POLL,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+LOCK_CAPABILITY = "st.lock"
+LOCK_ATTRIBUTE = "lockState"
+CONFIRMATION_WINDOW_CAP = 60
+_EXHAUSTED = {"max attempts", "idle cap"}
 
 
 def next_fibonacci_delay(delay: int, prev_delay: int) -> int:
@@ -35,12 +49,59 @@ def next_fibonacci_delay(delay: int, prev_delay: int) -> int:
     return int(delay) + int(prev_delay)
 
 
+def reported_locked(state_data: Any) -> bool | None:
+    """Return the lock state only when the payload actually carries it.
+
+    Lock.is_locked falls back to False when st.lock is missing, which is
+    indistinguishable from a real unlock. Battery and door pushes must not
+    confirm a burst.
+    """
+    if not isinstance(state_data, dict):
+        return None
+    cap = state_data.get(LOCK_CAPABILITY)
+    if not isinstance(cap, dict) or LOCK_ATTRIBUTE not in cap:
+        return None
+    value = cap[LOCK_ATTRIBUTE]
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.lower()
+        if lowered == "locked":
+            return True
+        if lowered == "unlocked":
+            return False
+    return None
+
+
+def iter_device_payloads(response: Any):
+    """Yield device dicts from nested or flat U-Tec replies.
+
+    Production has returned both {"payload": {"devices": [...]}} and a
+    top-level list (issue #30). A flat list must not silently burn attempts.
+    """
+    if isinstance(response, list):
+        yield from (item for item in response if isinstance(item, dict))
+        return
+    if not isinstance(response, dict):
+        return
+    payload = response.get("payload", response)
+    if isinstance(payload, list):
+        yield from (item for item in payload if isinstance(item, dict))
+        return
+    if isinstance(payload, dict):
+        devices = payload.get("devices", [])
+        if isinstance(devices, list):
+            yield from (item for item in devices if isinstance(item, dict))
+
+
 class AdaptivePoller:
     """Per-device Fibonacci confirmation bursts (1, 2, 3, 5, 8s)."""
 
     def __init__(self, coordinator) -> None:
         self.coordinator = coordinator
         self._bursts: dict[str, dict[str, Any]] = {}
+        self._confirmations: dict[str, dict[str, Any]] = {}
+        self._ticks: dict[str, Any] = {}
 
     def idle_interval_seconds(self) -> int:
         interval = self.coordinator.update_interval
@@ -48,23 +109,39 @@ class AdaptivePoller:
             return DEFAULT_SCAN_INTERVAL
         return max(1, int(interval.total_seconds()))
 
-    def cancel(self, device_id: str, reason: str) -> None:
-        burst = self._bursts.pop(device_id, None)
-        if burst is None:
+    def confirmation_window_seconds(self) -> int:
+        """How long a confirmed state is protected from a contradicting report."""
+        return min(CONFIRMATION_WINDOW_CAP, self.idle_interval_seconds())
+
+    def cancel(self, device_id: str, reason: str, *, burst: dict[str, Any] | None = None) -> None:
+        current = self._bursts.get(device_id)
+        if current is None:
             return
-        unsub = burst.get("unsub")
+        if burst is not None and current is not burst:
+            return
+        self._bursts.pop(device_id, None)
+        unsub = current.get("unsub")
         if unsub:
             unsub()
+            current["unsub"] = None
+        attempts = int(current.get("attempt", 0))
         _LOGGER.debug(
             "Adaptive aggressive stopped for %s after %s attempt(s): %s",
             device_id,
-            int(burst.get("attempt", 0)),
+            attempts,
             reason,
         )
+        if reason in _EXHAUSTED or reason.startswith("next delay"):
+            self._signal_unconfirmed(device_id, current, reason, attempts)
 
     def cancel_all(self, reason: str = "unload") -> None:
         for device_id in list(self._bursts):
             self.cancel(device_id, reason)
+        for device_id, task in list(self._ticks.items()):
+            cancel = getattr(task, "cancel", None)
+            if cancel:
+                cancel()
+            self._ticks.pop(device_id, None)
 
     def start(self, device_id: str, expected_locked: bool) -> None:
         idle = self.idle_interval_seconds()
@@ -96,27 +173,101 @@ class AdaptivePoller:
         )
         self._schedule(device_id, initial)
 
+    def young_confirmation(self, device_id: str) -> dict[str, Any] | None:
+        mark = self._confirmations.get(device_id)
+        if mark is None:
+            return None
+        age = (dt_util.utcnow() - mark["at"]).total_seconds()
+        if age > self.confirmation_window_seconds():
+            return None
+        return mark
+
+    def contradicts_confirmation(self, device_id: str, state_data: Any) -> bool:
+        """Return True when a report disagrees with a young confirmation."""
+        mark = self.young_confirmation(device_id)
+        observed = reported_locked(state_data)
+        if mark is None or observed is None:
+            return False
+        return observed != mark["locked"]
+
+    def rearm_for_confirmation(self, device_id: str) -> None:
+        """Fetch fresh evidence instead of applying a contradicting report."""
+        mark = self.young_confirmation(device_id)
+        if mark is None:
+            return
+        _LOGGER.debug(
+            "Adaptive aggressive re-arming %s: report contradicted confirmed locked=%s",
+            device_id,
+            mark["locked"],
+        )
+        self.start(device_id, bool(mark["locked"]))
+
     def cancel_if_confirmed(
         self,
         device_id: str,
         device,
         reason: str = "confirmed",
+        state_data: Any = None,
     ) -> None:
         burst = self._bursts.get(device_id)
         if burst is None:
             return
-        if getattr(device, "is_locked", None) == burst["expected_locked"]:
-            self.cancel(device_id, reason)
+        payload = device.get_state_data() if state_data is None else state_data
+        observed = reported_locked(payload)
+        if observed is None or observed != burst["expected_locked"]:
+            return
+        self._confirmations[device_id] = {
+            "locked": observed,
+            "at": dt_util.utcnow(),
+        }
+        self.cancel(device_id, reason, burst=burst)
 
     def _schedule(self, device_id: str, delay: int) -> None:
         burst = self._bursts.get(device_id)
         if burst is None:
             return
+        previous = burst.get("unsub")
+        if previous:
+            previous()
+            burst["unsub"] = None
 
         async def _fire(_now) -> None:
-            await self.async_tick(device_id)
+            task = asyncio.current_task()
+            if task is not None:
+                self._ticks[device_id] = task
+            try:
+                await self.async_tick(device_id)
+            finally:
+                if task is not None and self._ticks.get(device_id) is task:
+                    self._ticks.pop(device_id, None)
 
         burst["unsub"] = async_call_later(self.coordinator.hass, delay, _fire)
+
+    def _signal_unconfirmed(
+        self,
+        device_id: str,
+        burst: dict[str, Any],
+        reason: str,
+        attempts: int,
+    ) -> None:
+        _LOGGER.warning(
+            "Adaptive aggressive gave up for %s after %s attempt(s): %s",
+            device_id,
+            attempts,
+            reason,
+        )
+        bus = getattr(self.coordinator.hass, "bus", None)
+        fire = getattr(bus, "async_fire", None)
+        if fire:
+            fire(
+                EVENT_LOCK_COMMAND_FAILED,
+                {
+                    "device_id": device_id,
+                    "expected_locked": burst.get("expected_locked"),
+                    "attempts": attempts,
+                    "reason": reason,
+                },
+            )
 
     async def async_tick(self, device_id: str) -> None:
         """Run one poll after the Adaptive Aggressive timer ends."""
@@ -138,20 +289,20 @@ class AdaptivePoller:
 
         device = self.coordinator.devices.get(device_id)
         if device is None:
-            self.cancel(device_id, "device gone")
+            self.cancel(device_id, "device gone", burst=burst)
             return
 
         confirmed = False
         try:
             response = await self.coordinator.api.get_device_state([device_id], None)
+            if self._bursts.get(device_id) is not burst:
+                return
             self.coordinator.raise_for_error_payload(response)
-            if response and "payload" in response:
-                for device_data in response["payload"].get("devices", []):
-                    if device_data.get("id") == device_id:
-                        await device.update_state_data(device_data)
-                        break
-            self.coordinator.consecutive_update_failures = 0
-            actual = getattr(device, "is_locked", None)
+            for device_data in iter_device_payloads(response):
+                if device_data.get("id") == device_id:
+                    await device.update_state_data(device_data)
+                    break
+            actual = reported_locked(device.get_state_data())
             _LOGGER.debug(
                 "Adaptive aggressive result for %s: locked=%s expected=%s",
                 device_id,
@@ -160,35 +311,41 @@ class AdaptivePoller:
             )
             async_dispatcher_send(
                 self.coordinator.hass,
-                f"{SIGNAL_DEVICE_UPDATE}_{device_id}",
+                f"{SIGNAL_ADAPTIVE_POLL}_{device_id}",
                 device.get_state_data(),
             )
-            confirmed = actual == expected
+            confirmed = actual is not None and actual == expected
+        except ConfigEntryAuthFailed:
+            raise
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning(
                 "Adaptive aggressive poll failed for %s: %s", device_id, err
             )
+
+        if self._bursts.get(device_id) is not burst:
+            return
 
         if confirmed:
             snapshot = device.get_state_data()
             current = dict(self.coordinator.data) if self.coordinator.data else {}
             current[device_id] = snapshot
             self.coordinator.async_set_updated_data(current)
-            self.cancel(device_id, "confirmed")
+            self._confirmations[device_id] = {
+                "locked": expected,
+                "at": dt_util.utcnow(),
+            }
+            self.cancel(device_id, "confirmed", burst=burst)
             return
 
         if burst["attempt"] >= ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS:
-            self.cancel(device_id, "max attempts")
+            self.cancel(device_id, "max attempts", burst=burst)
             return
 
         prev_delay = int(burst.get("prev_delay", delay))
         next_delay = next_fibonacci_delay(delay, prev_delay)
         idle = self.idle_interval_seconds()
         if next_delay >= idle:
-            self.cancel(
-                device_id,
-                f"next delay {next_delay}s >= idle {idle}s",
-            )
+            self.cancel(device_id, "idle cap", burst=burst)
             return
 
         burst["prev_delay"] = delay
