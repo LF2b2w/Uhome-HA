@@ -172,6 +172,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(webhook_handler.unregister_webhook)
     # Stop periodic discovery when the entry is unloaded
     entry.async_on_unload(coordinator.async_stop_periodic_discovery)
+    # Drop in-flight confirmation bursts so timers do not fire after unload
+    entry.async_on_unload(coordinator.async_stop_adaptive_polls)
 
     return True
 

@@ -1,99 +1,93 @@
-# Uhome (U-Tec) Home Assistant Integration
+# Uhome (U-Tec)
 
-A Home Assistant integration for U-Tec smart home devices via the Uhome API that allows you to control your locks, lights, switches, and sensors through Home Assistant.
+Home Assistant control for U-Tec locks, lights, switches, and sensors through the Uhome API.
 
-## Device Types
-- Supports multiple U-tec device types:
-    - Locks
-    - Lights
-    - Switches
-    - Smart Plugs (Wifi)
- 
-### Features
-- Secure API communication
-- Locking and unlocking
-- Lock states
-- Door states
-- Battery levels
-- Switch on and off (Lightbulbs use the switch capabilitiy for some reason, so at very least they should have rudimentary functionality)
-- SwitchLevel (Honestly, idk what this is actually for, but hopefully we can use it to control light brightness until they properly implement light controls)
+| | |
+| --- | --- |
+| Devices | Locks, lights, switches, Wi-Fi smart plugs |
+| Talks to | U-Tec cloud API, plus an optional webhook or Nabu Casa cloudhook |
+| Install | [HACS](#install) custom integration |
+| Credentials | Xthings Home app, My Account → OpenAPI |
 
-## Limitations
-- Currently the Utec API doesn't support the following devices:
-	- Wifi bridge modules
-	- Air Portal registration / devices
+## What you get
 
-## Requirements
-- API Credentials
-- External Access Configured (ie., Nabu Casa)
+- Lock, unlock, and passage-mode state
+- Door state, when the lock has a door sensor
+- Battery level and battery status
+- On and off for switches, plugs, and bulbs that expose the switch capability
+- SwitchLevel for dimming until U-Tec ships a real light capability
+- Adaptive Aggressive confirmation for locks when a push never arrives
 
-## Ensure Home Assistant knows its own URL
-For the Configuration step below to work, Home Assistant must know its own URL.
+The U-Tec API does not currently expose Wi-Fi bridge modules or Air Portal devices.
 
-Navigate to Settings > System > Network and set the Home Assistant URL (Normally `http://homeassistant.local:8123`)
+## Adaptive Aggressive
 
-## Getting Your Credentials
-#### Having your credentials is necessary to configure the integration, so get them before you install it.
+U-Tec can register a webhook or a Nabu Casa cloudhook. Those pushes often never arrive, so Home Assistant otherwise learns a lock or unlock only on the next idle poll.
 
-API credentials are now available directly in the Xthings Home app (formerly U-Home) version 3.5.5 or later. No need to submit a request through the developer portal.
+Adaptive Aggressive is off until you turn it on. After a lock or unlock from Home Assistant it polls only that lock:
 
-1. Open the Xthings Home app and go to **My Account**
-2. Tap **OpenAPI**
-3. Follow the prompts to activate OpenAPI — select your role and the products you are integrating with, then tap **Activate Openapi**
+1. The command is sent as usual.
+2. A confirmation burst polls at the Fibonacci delays from `ADAPTIVE_AGGRESSIVE_INITIAL_DELAY` and `ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS`. Today that is 1s, 2s, 3s, 5s, 8s.
+3. The burst stops when the API reports the commanded state, a push carrying `st.lock` matches it, the attempt cap is reached, or the next delay would be at least the idle poll interval.
+4. Lights, switches, and every other device stay on the idle interval. Passage mode is skipped, because the lock ignores the command.
+
+A confirmed burst is remembered for one idle interval, capped at `CONFIRMATION_WINDOW_CAP` (60 seconds). A later poll or push that contradicts that confirmation is not applied. The burst is re-armed and the fresh poll wins. A new lock or unlock clears the confirmation, so the new command is not treated as a contradiction. A battery or door push cannot confirm a burst.
+
+If the burst gives up, the integration logs a warning and fires `u_tec_lock_command_failed` with `device_id`, `expected_locked`, `attempts`, and `reason`. Burst polls use their own signal, so optimistic lock updates keep their grace period instead of flickering on the first poll.
+
+Debug progress is under `custom_components.u_tec`.
+
+### Recommended lock settings
+
+- Polling interval: 20 seconds. Kind to the API, and still long enough for the full confirmation sequence.
+- Optimistic updates for locks: off. Show what the API confirmed.
+- Adaptive Aggressive: on, for every lock or only the ones you operate from Home Assistant.
+
+Configure → Adaptive Aggressive, after the integration is set up.
+
+## Install
+
+### HACS
+
+1. In HACS, add this repository as an integration.
+2. Search for U-Tec and install it.
+3. Restart Home Assistant.
+
+### Manual
+
+Copy `custom_components/u_tec` into your Home Assistant `custom_components` directory and restart.
+
+## Credentials
+
+You need API credentials before setup. They come from the Xthings Home app (formerly U-Home), version 3.5.5 or later. No developer-portal request.
+
+1. Open the Xthings Home app and go to My Account.
+2. Tap OpenAPI.
+3. Activate OpenAPI, choose your role and products, then tap Activate Openapi.
 
 ![Steps to enable OpenAPI in the app](images/api_enable_steps.png)
 
-Once activated, you will see your `Client ID`, `Client Secret`, `Scope`, and `RedirectUri`.
-- Set `RedirectUri` to `https://my.home-assistant.io/redirect/oauth` exactly as written — do not replace the hostname with your own Home Assistant URL
-- Confirm `Scope` is set to `OpenAPI`
-- Tap **Save**
+Set `RedirectUri` to `https://my.home-assistant.io/redirect/oauth` exactly. Do not replace the hostname. Confirm `Scope` is `OpenAPI`, then save.
 
 ![API credentials screen](images/api_credentials.png)
 
-For the integration you will need `Client ID` and `Client Secret`.
+The integration needs the Client ID and Client Secret. Details are in the [Developer API documentation](https://doc.api.u-tec.com/#intro). API problems go to [Xthings support](https://developer.xthings.com/hc/en-us/requests/new). See [issue #36](https://github.com/LF2b2w/Uhome-HA/issues/36) for the credential flow. Screenshots courtesy of @geofox784.
 
-For more information, see the [Developer API Documentation](https://doc.api.u-tec.com/#intro). If you run into issues with the API, you can [submit a support request](https://developer.xthings.com/hc/en-us/requests/new).
+Home Assistant must know its own URL before the next step. Settings → System → Network, and set the Home Assistant URL. A local install is usually `http://homeassistant.local:8123`. Push delivery also needs external access, normally Nabu Casa.
 
-*See [issue #36](https://github.com/LF2b2w/Uhome-HA/issues/36) for more details. Screenshots courtesy of @geofox784.*
+## Configure
 
-## Installation
-### HACS (Recommended)
-Open HACS in your Home Assistant instance\
-Click add custom repo\
-Paste the URL of this repo and choose type integration\
-Search for "U-tec"\
-Click "Install"
+1. Settings → Devices & services → Integrations.
+2. Add integration, search for U-Tec, and enter the Client ID and Client Secret.
+3. Sign in on the U-Tec [OAuth page](https://oauth.u-tec.com/login/auth) and authorize the connection.
+4. Link the account when Home Assistant asks.
 
-### Manual Installation
-Download the repository\
-Copy the custom_components/Homeassistant-utec folder to your Home Assistant's custom_components directory\
-Restart Home Assistant
+Rotate credentials from the integration's Reconfigure action. You do not need to remove the integration. Polling interval, optimistic updates, and Adaptive Aggressive are on Configure after setup.
 
-## Configuration
-In Home Assistant, go to Settings > Devices & services > Integrations\
-Click the "+ Add integration" button\
-Search for "U-Tec"\
-You will need to provide the credentials information from above:
-- Client ID
-- Client Secret
+## Help
 
-When you submit, you will be taken to the U-Tec [OAuth site](https://oauth.u-tec.com/login/auth) where you need to login with your U-Tec username and password.  That will then ask you to authorize the OAuth connection.  After that it will take you back to Home Assistant and ask you to link your account to Home Assistant.
+Questions and setup notes live in the [FAQ discussion](https://github.com/LF2b2w/Uhome-HA/discussions/2). Bugs go on [Issues](https://github.com/LF2b2w/Uhome-HA/issues). Pull requests are welcome.
 
-If the credentials are ever rotated by U-Tec or you regenerate them in the Xthings app, you can update them in place via the integration's **Reconfigure** action (3-dot menu on the integration card) — no need to remove and re-add the integration.
+MIT licensed. See [LICENSE](./LICENSE).
 
-## Troubleshooting
-See [FAQ](https://github.com/LF2b2w/Uhome-HA/discussions/2)
-    
-## Contributing
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-#### License
-This project is licensed under the MIT [License](./LICENSE).
-
-Support
-If you encounter any issues or have questions: Check the [Issues](https://github.com/LF2b2w/Uhome-HA/issues) page
-Create a new issue if your problem isn't already reported
-
-[Join](https://github.com/LF2b2w/Uhome-HA/discussions) the discussion in the Home Assistant community forums
----
-Made with ❤️ by @LF2b2w
+Made by @LF2b2w.

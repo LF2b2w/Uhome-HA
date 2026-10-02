@@ -13,6 +13,24 @@ CONF_OPTIMISTIC_SWITCHES = "optimistic_switches"
 CONF_OPTIMISTIC_LOCKS = "optimistic_locks"
 DEFAULT_OPTIMISTIC = True
 
+CONF_ADAPTIVE_AGGRESSIVE_LOCKS = "adaptive_aggressive_locks"
+# Off until configured. Recommended on for locks: U-Tec push is unreliable,
+# and a short confirmation burst is safer than showing an unconfirmed state.
+DEFAULT_ADAPTIVE_AGGRESSIVE = False
+
+
+def option_enabled(
+    options: Mapping[str, Any],
+    conf_key: str,
+    device_id: str,
+    default: bool,
+) -> bool:
+    """Resolve a True / False / list[device_id] option for one device."""
+    value = options.get(conf_key, default)
+    if isinstance(value, bool):
+        return value
+    return device_id in value
+
 
 def is_optimistic_enabled(
     options: Mapping[str, Any],
@@ -27,10 +45,24 @@ def is_optimistic_enabled(
       - False   -> no devices of this type optimistic
       - list    -> only listed device IDs optimistic
     """
-    value = options.get(conf_key, DEFAULT_OPTIMISTIC)
-    if isinstance(value, bool):
-        return value
-    return device_id in value
+    return option_enabled(options, conf_key, device_id, DEFAULT_OPTIMISTIC)
+
+
+def is_adaptive_aggressive_enabled(
+    options: Mapping[str, Any],
+    device_id: str,
+) -> bool:
+    """Return True if Adaptive Aggressive polling is enabled for this lock.
+
+    Same shape as the optimistic options: absent/False off, True all locks,
+    list only the listed device IDs. Absent defaults to off.
+    """
+    return option_enabled(
+        options,
+        CONF_ADAPTIVE_AGGRESSIVE_LOCKS,
+        device_id,
+        DEFAULT_ADAPTIVE_AGGRESSIVE,
+    )
 
 
 def push_asserts_state(push_data: Any, capability: str, attribute: str) -> bool:

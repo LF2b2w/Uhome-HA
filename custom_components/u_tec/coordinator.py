@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 import logging
 
+from custom_components.u_tec.adaptive import AdaptivePoller
 from custom_components.u_tec.const import (
     DEFAULT_DISCOVERY_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
@@ -81,6 +82,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         self.push_devices = []
         self.blacklisted_devices = []
         self.last_push_received: datetime | None = None
+        self.adaptive = AdaptivePoller(self)
         self._discovery_interval = timedelta(seconds=discovery_interval)
         self._cancel_discovery: callable | None = None
         # Consecutive failed polls. Entities stay available through a single
@@ -119,6 +121,29 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         if self._cancel_discovery:
             self._cancel_discovery()
             self._cancel_discovery = None
+
+    def async_stop_adaptive_polls(self) -> None:
+        """Cancel in-flight Adaptive Aggressive bursts."""
+        self.adaptive.cancel_all("unload")
+
+    def raise_for_error_payload(self, response) -> None:
+        """Surface a U-Tec error envelope. Used by Adaptive Aggressive polls."""
+        _raise_for_error_payload(response)
+
+    def start_adaptive_poll(self, device_id: str, expected_locked: bool) -> None:
+        """Start a confirmation burst for one lock."""
+        self.adaptive.start(device_id, expected_locked)
+
+    def _defer_contradicting_report(self, device_id: str, state_data) -> bool:
+        """Hold a report that contradicts a young confirmation and re-poll.
+
+        Returns True when the caller must not apply this payload. The re-armed
+        burst fetches fresh evidence and that result wins.
+        """
+        if not self.adaptive.contradicts_confirmation(device_id, state_data):
+            return False
+        self.adaptive.rearm_for_confirmation(device_id)
+        return True
 
     async def async_discover_devices(self) -> None:
         """Discover devices and register any new ones. Does not update state."""
@@ -208,7 +233,15 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                 for device_data in response["payload"].get("devices", []):
                     device_id = device_data.get("id")
                     if device_id and device_id in self.devices:
-                        await self.devices[device_id].update_state_data(device_data)
+                        device = self.devices[device_id]
+                        if self._defer_contradicting_report(device_id, device_data):
+                            continue
+                        await device.update_state_data(device_data)
+                        self.adaptive.cancel_if_confirmed(
+                            device_id,
+                            device,
+                            state_data=device_data,
+                        )
 
             self.consecutive_update_failures = 0
             return {
@@ -266,11 +299,20 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     if isinstance(raw, list):
                         devices_data = raw
                     else:
-                        _LOGGER.warning("Unexpected 'devices' value in push payload: %s", raw)
+                        _LOGGER.warning(
+                            "Unexpected 'devices' value in push payload: %s",
+                            type(raw).__name__,
+                        )
                 else:
-                    _LOGGER.warning("Unexpected push payload type %s: %s", type(payload), push_data)
+                    _LOGGER.warning(
+                        "Unexpected push payload type %s",
+                        type(payload).__name__,
+                    )
             else:
-                _LOGGER.warning("Unrecognised push data type %s: %s", type(push_data), push_data)
+                _LOGGER.warning(
+                    "Unrecognised push data type %s",
+                    type(push_data).__name__,
+                )
 
             if not devices_data:
                 _LOGGER.debug("No device data found in push update")
@@ -278,7 +320,10 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
 
             for device_data in devices_data:
                 if not isinstance(device_data, dict):
-                    _LOGGER.warning("Skipping non-dict device entry in push update: %s", device_data)
+                    _LOGGER.warning(
+                        "Skipping non-dict device entry in push update: %s",
+                        type(device_data).__name__,
+                    )
                     continue
 
                 device_id = device_data.get("id")
@@ -287,7 +332,25 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     _LOGGER.warning("Device ID missing in push update")
                     continue
 
-                # Check if this device should receive push updates
+                if device_id not in self.devices:
+                    _LOGGER.debug(
+                        "Received update for unknown device: %s", device_id
+                    )
+                    continue
+
+                device = self.devices[device_id]
+                if self._defer_contradicting_report(device_id, device_data):
+                    continue
+
+                # A confirming push stops the burst even when this lock is
+                # excluded from push selection. Applying the payload still
+                # respects that filter.
+                self.adaptive.cancel_if_confirmed(
+                    device_id,
+                    device,
+                    reason="push",
+                    state_data=device_data,
+                )
                 if self.push_devices and device_id not in self.push_devices:
                     _LOGGER.debug(
                         "Skipping push update for device %s (not in selected devices)",
@@ -295,25 +358,19 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     )
                     continue
 
-                if device_id in self.devices:
-                    device = self.devices[device_id]
-                    await device.update_state_data(device_data)
+                await device.update_state_data(device_data)
 
-                    _LOGGER.debug(
-                        "Updated device %s with push data: %s",
-                        device_id,
-                        device_data,
-                    )
+                _LOGGER.debug(
+                    "Updated device %s with push data: %s",
+                    device_id,
+                    device_data,
+                )
 
-                    async_dispatcher_send(
-                        self.hass,
-                        f"{SIGNAL_DEVICE_UPDATE}_{device_id}",
-                        device.get_state_data(),
-                    )
-                else:
-                    _LOGGER.debug(
-                        "Received update for unknown device: %s", device_id
-                    )
+                async_dispatcher_send(
+                    self.hass,
+                    f"{SIGNAL_DEVICE_UPDATE}_{device_id}",
+                    device.get_state_data(),
+                )
 
             # A successful authenticated push proves the channel is alive —
             # reset the poll-failure counter so entities stay available during

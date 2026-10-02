@@ -40,6 +40,7 @@ from utec_py.devices.lock import Lock as UhomeLock
 from utec_py.devices.switch import Switch as UhomeSwitch
 
 from .const import (
+    CONF_ADAPTIVE_AGGRESSIVE_LOCKS,
     CONF_HA_DEVICES,
     CONF_OPTIMISTIC_LIGHTS,
     CONF_OPTIMISTIC_LOCKS,
@@ -65,9 +66,20 @@ OPTIMISTIC_MODE_CUSTOM = "custom"
 OPTIMISTIC_MODES = [OPTIMISTIC_MODE_ALL, OPTIMISTIC_MODE_NONE, OPTIMISTIC_MODE_CUSTOM]
 
 
-def _current_mode(value: bool | list[str] | None) -> str:
-    """Infer the mode selector default from a stored option value."""
-    if value is True or value is None:
+def _current_mode(
+    value: bool | list[str] | None,
+    *,
+    absent: str = OPTIMISTIC_MODE_ALL,
+) -> str:
+    """Infer the mode selector default from a stored option value.
+
+    ``absent`` is load-bearing. Optimistic updates default on. Adaptive
+    Aggressive defaults off. Unifying these without the argument would turn
+    confirmation bursts on for every lock.
+    """
+    if value is None:
+        return absent
+    if value is True:
         return OPTIMISTIC_MODE_ALL
     if value is False:
         return OPTIMISTIC_MODE_NONE
@@ -302,6 +314,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 "update_push": "Update Push Status",
                 "get_devices": "Select Active Devices",
                 "optimistic_updates": "Configure Optimistic Updates",
+                "adaptive_aggressive": "Adaptive Aggressive",
                 "polling_interval": "Polling Interval",
             },
         )
@@ -530,6 +543,78 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             user_input=user_input,
         )
 
+    async def async_step_adaptive_aggressive(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Configure Adaptive Aggressive confirmation polling for locks."""
+        mode_selector = SelectSelector(
+            SelectSelectorConfig(
+                options=OPTIMISTIC_MODES,
+                mode=SelectSelectorMode.DROPDOWN,
+                translation_key="adaptive_mode",
+            )
+        )
+        if user_input is not None:
+            mode = user_input["locks_mode"]
+            if mode == OPTIMISTIC_MODE_ALL:
+                self.options[CONF_ADAPTIVE_AGGRESSIVE_LOCKS] = True
+                return self.async_create_entry(title="", data=self.options)
+            if mode == OPTIMISTIC_MODE_NONE:
+                self.options[CONF_ADAPTIVE_AGGRESSIVE_LOCKS] = False
+                return self.async_create_entry(title="", data=self.options)
+            return await self.async_step_pick_adaptive_locks()
+
+        return self.async_show_form(
+            step_id="adaptive_aggressive",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "locks_mode",
+                        default=_current_mode(
+                            self.options.get(CONF_ADAPTIVE_AGGRESSIVE_LOCKS),
+                            absent=OPTIMISTIC_MODE_NONE,
+                        ),
+                    ): mode_selector,
+                }
+            ),
+        )
+
+    async def async_step_pick_adaptive_locks(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Pick which locks get Adaptive Aggressive confirmation bursts."""
+        if user_input is not None:
+            self.options[CONF_ADAPTIVE_AGGRESSIVE_LOCKS] = user_input[
+                CONF_ADAPTIVE_AGGRESSIVE_LOCKS
+            ]
+            return self.async_create_entry(title="", data=self.options)
+
+        coordinator = self.hass.data[DOMAIN][self.config_entry.entry_id]["coordinator"]
+        devices = {
+            device_id: device.name
+            for device_id, device in coordinator.devices.items()
+            if isinstance(device, UhomeLock)
+        }
+        if not devices:
+            self.options[CONF_ADAPTIVE_AGGRESSIVE_LOCKS] = []
+            return self.async_create_entry(title="", data=self.options)
+
+        stored = self.options.get(CONF_ADAPTIVE_AGGRESSIVE_LOCKS)
+        default = stored if isinstance(stored, list) else list(devices.keys())
+        return self.async_show_form(
+            step_id="pick_adaptive_locks",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_ADAPTIVE_AGGRESSIVE_LOCKS,
+                        default=default,
+                    ): cv.multi_select(devices),
+                }
+            ),
+        )
+
     async def async_step_get_devices(
         self,
         user_input: dict[str, Any] | None = None
@@ -558,7 +643,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         if user_input is not None:
             return self.async_create_entry(
-                title="", data={"devices": user_input["selected_devices"]}
+                title="",
+                data={**self.options, "devices": user_input["selected_devices"]},
             )
 
         return self.async_show_form(

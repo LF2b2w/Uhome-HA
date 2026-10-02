@@ -3,7 +3,7 @@
     "step": {
       "replace_credentials": {
         "title": "U-Tec credentials",
-        "description": "Enter your Client ID and Client Secret from the Xthings app (My Account → OpenAPI). Submitting will start the U-Tec authorization. The Client Secret is never displayed back — re-enter it here even if you are only rotating the secret.",
+        "description": "Enter your Client ID and Client Secret from the Xthings app (My Account \u2192 OpenAPI). Submitting will start the U-Tec authorization. The Client Secret is never displayed back \u2014 re-enter it here even if you are only rotating the secret.",
         "data": {
           "client_id": "Client ID",
           "client_secret": "Client Secret"
@@ -90,9 +90,23 @@
       },
       "polling_interval": {
         "title": "Polling Interval",
-        "description": "How often Home Assistant should poll the U-Tec API for device state. With working push (cloudhook) updates you can raise this (e.g. 300–600 seconds). The default of 10 seconds suits installs that rely mainly on polling.",
+        "description": "How often Home Assistant should poll the U-Tec API for device state. 20 seconds is the recommended lock interval when Adaptive Aggressive is on: slow enough to be kind to the API, and still long enough for the full 1/2/3/5/8 confirmation sequence. With reliable push you can raise this further (300\u2013600 seconds). The default of 10 seconds suits installs that rely mainly on polling.",
         "data": {
           "scan_interval": "Poll interval"
+        }
+      },
+      "adaptive_aggressive": {
+        "title": "Adaptive Aggressive",
+        "description": "After a lock or unlock command, poll only that lock on a Fibonacci delay (1s, 2s, 3s, 5s, 8s) until the API reports the commanded state. Recommended on. U-Tec push often never arrives, and this burst stops at 5 attempts or when the next delay would be at least the idle poll interval. Passage mode is skipped.",
+        "data": {
+          "locks_mode": "Locks"
+        }
+      },
+      "pick_adaptive_locks": {
+        "title": "Adaptive Aggressive Locks",
+        "description": "Select the locks that should get a confirmation burst after a command. Unselected locks wait for the idle poll or a push.",
+        "data": {
+          "adaptive_aggressive_locks": "Adaptive Aggressive locks"
         }
       }
     }
@@ -103,6 +117,13 @@
         "all": "All devices optimistic",
         "none": "No devices optimistic",
         "custom": "Custom per-device"
+      }
+    },
+    "adaptive_mode": {
+      "options": {
+        "all": "All locks (recommended)",
+        "none": "Off",
+        "custom": "Custom per lock"
       }
     }
   }

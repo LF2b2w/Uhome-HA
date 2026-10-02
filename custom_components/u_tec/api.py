@@ -19,6 +19,15 @@ from .const import DOMAIN, WEBHOOK_HANDLER, WEBHOOK_ID_PREFIX
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _payload_keys(data) -> list[str]:
+    """Return top-level keys only. Never log push bodies or bearer tokens."""
+    if isinstance(data, dict):
+        return sorted(str(key) for key in data)
+    if isinstance(data, list):
+        return [f"list:{len(data)}"]
+    return [type(data).__name__]
+
 # Re-register the webhook with a fresh secret every 24 hours
 _REREGISTER_INTERVAL = timedelta(hours=24)
 
@@ -192,7 +201,10 @@ class AsyncPushUpdateHandler:
         try:
             _LOGGER.debug("Registering webhook URL: %s", webhook_url)
             result = await self.api.set_push_status(webhook_url, self._push_secret)
-            _LOGGER.debug("Webhook registration result: %s", result)
+            _LOGGER.debug(
+                "Webhook registration completed: ok=%s",
+                bool(result),
+            )
         except ApiError as err:
             _LOGGER.error("Failed to register webhook with U-Tec API: %s", err)
             return False
@@ -306,10 +318,9 @@ class AsyncPushUpdateHandler:
                 return web.Response(status=400)
 
             _LOGGER.debug(
-                "Webhook hit received: method=%s headers=%s data=%s",
+                "Webhook hit received: method=%s header_names=%s",
                 request.method,
-                dict(getattr(request, "headers", {}) or {}),
-                data,
+                sorted(str(key) for key in (getattr(request, "headers", {}) or {})),
             )
 
             # Validate the push secret via the Authorization header.
@@ -336,7 +347,7 @@ class AsyncPushUpdateHandler:
                 )
                 return web.Response(status=403)
 
-            _LOGGER.debug("Received webhook data: %s", data)
+            _LOGGER.debug("Webhook payload accepted: keys=%s", _payload_keys(data))
 
             if self.entry_id not in hass.data.get(DOMAIN, {}):
                 _LOGGER.error("Unknown entry_id in webhook: %s", self.entry_id)

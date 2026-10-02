@@ -3,10 +3,13 @@
 from datetime import timedelta
 
 from .optimistic import (
+    CONF_ADAPTIVE_AGGRESSIVE_LOCKS,
     CONF_OPTIMISTIC_LIGHTS,
     CONF_OPTIMISTIC_SWITCHES,
     CONF_OPTIMISTIC_LOCKS,
+    DEFAULT_ADAPTIVE_AGGRESSIVE,
     DEFAULT_OPTIMISTIC,
+    is_adaptive_aggressive_enabled,
     is_optimistic_enabled,
     push_asserts_state,
 )
@@ -36,6 +39,15 @@ DEFAULT_DISCOVERY_INTERVAL = 300  # seconds (5 minutes)
 MIN_SCAN_INTERVAL = 10
 MAX_SCAN_INTERVAL = 3600
 
+# Adaptive Aggressive lock confirmation. After a lock/unlock command, poll
+# that one device on a Fibonacci delay (1, 2, 3, 5, 8s) until the API
+# reports the commanded state. Cap at 5 attempts and never schedule a
+# delay >= the idle scan interval.
+ADAPTIVE_AGGRESSIVE_INITIAL_DELAY = 1
+ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS = 5
+# A confirmed state is protected for one idle interval, never longer than this.
+CONFIRMATION_WINDOW_CAP = 60
+
 # Key used inside hass.data[DOMAIN] for yaml-sourced config (separate from entry IDs).
 YAML_CONFIG_KEY = "_yaml_config"
 
@@ -51,6 +63,10 @@ API_BASE_URL = "https://api.u-tec.com/action"
 
 SIGNAL_NEW_DEVICE = f"{DOMAIN}_new_device"
 SIGNAL_DEVICE_UPDATE = f"{DOMAIN}_device_update"
+# Burst polls are not pushes. Listeners must not clear optimistic state
+# immediately when this fires; that grace stays on the coordinator path.
+SIGNAL_ADAPTIVE_POLL = f"{DOMAIN}_adaptive_poll"
+EVENT_LOCK_COMMAND_FAILED = f"{DOMAIN}_lock_command_failed"
 
 WEBHOOK_ID_PREFIX = "u_tec_push_"
 WEBHOOK_HANDLER = 'u_tec_webhook_handler'
