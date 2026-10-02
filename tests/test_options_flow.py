@@ -245,8 +245,7 @@ async def test_adaptive_aggressive_custom_picks_locks(hass):
 async def test_device_selection_keeps_other_options(hass):
     from custom_components.u_tec.const import CONF_ADAPTIVE_AGGRESSIVE_LOCKS
 
-    entry = make_config_entry()
-    entry.options = {CONF_ADAPTIVE_AGGRESSIVE_LOCKS: True, "devices": ["lock-1"]}
+    entry = make_config_entry(options={CONF_ADAPTIVE_AGGRESSIVE_LOCKS: True, "devices": ["lock-1"]})
     entry.add_to_hass(hass)
     api = MagicMock()
     api.discover_devices = AsyncMock(return_value={
