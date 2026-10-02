@@ -10,7 +10,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import asyncio
 import pytest
 
-from custom_components.u_tec.adaptive import AdaptivePoller, next_fibonacci_delay
+from custom_components.u_tec.adaptive import (
+    AdaptivePoller,
+    confirmation_delays,
+    next_fibonacci_delay,
+)
 from custom_components.u_tec.const import (
     ADAPTIVE_AGGRESSIVE_INITIAL_DELAY,
     ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS,
@@ -38,14 +42,10 @@ def test_list_enables_only_listed_locks():
     assert is_adaptive_aggressive_enabled(options, "lock-2") is True
 
 
-def test_fibonacci_sequence_is_1_2_3_5_8():
-    delay = ADAPTIVE_AGGRESSIVE_INITIAL_DELAY
-    prev = delay
-    seen = [delay]
-    for _ in range(4):
-        nxt = next_fibonacci_delay(delay, prev)
-        seen.append(nxt)
-        prev, delay = delay, nxt
+def test_fibonacci_sequence_matches_constants():
+    seen = confirmation_delays()
+    assert seen[0] == ADAPTIVE_AGGRESSIVE_INITIAL_DELAY
+    assert len(seen) == ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS
     assert seen == [1, 2, 3, 5, 8]
 
 
@@ -145,8 +145,8 @@ async def test_fibonacci_reschedule_until_max_attempts(scheduled):
             break
         delays.append(scheduled[-1]["delay"])
 
-    assert delays == [1, 2, 3, 5, 8]
-    assert "lock-1" not in poller._bursts
+    assert delays == confirmation_delays()
+    assert not poller.is_running("lock-1")
 
 
 async def test_stops_when_next_delay_would_meet_idle(scheduled):
@@ -233,9 +233,46 @@ def test_contradicting_report_is_deferred(scheduled):
     assert poller.contradicts_confirmation(
         "lock-1", {"st.lock": {"lockState": "Unlocked"}}
     )
+    coord.config_entry.options = {CONF_ADAPTIVE_AGGRESSIVE_LOCKS: True}
     poller.rearm_for_confirmation("lock-1")
-    assert poller._bursts["lock-1"]["expected_locked"] is True
+    assert poller.expected_locked("lock-1") is True
     assert scheduled[-1]["delay"] == 1
+
+
+def test_new_command_supersedes_confirmation(scheduled):
+    coord = _coordinator(idle=20)
+    device = MagicMock()
+    poller = AdaptivePoller(coord)
+    poller.start("lock-1", True)
+    poller.cancel_if_confirmed(
+        "lock-1",
+        device,
+        state_data={"st.lock": {"lockState": "Locked"}},
+    )
+    poller.start("lock-1", False)
+    assert poller.young_confirmation("lock-1") is None
+    assert poller.expected_locked("lock-1") is False
+    unlocked = {"st.lock": {"lockState": "Unlocked"}}
+    assert poller.contradicts_confirmation("lock-1", unlocked) is False
+    poller.cancel_if_confirmed("lock-1", device, reason="push", state_data=unlocked)
+    assert not poller.is_running("lock-1")
+    coord.hass.bus.async_fire.assert_not_called()
+
+
+def test_rearm_stops_when_option_is_off(scheduled):
+    coord = _coordinator(idle=20)
+    coord.config_entry.options = {CONF_ADAPTIVE_AGGRESSIVE_LOCKS: False}
+    device = MagicMock()
+    poller = AdaptivePoller(coord)
+    poller.start("lock-1", True)
+    poller.cancel_if_confirmed(
+        "lock-1",
+        device,
+        state_data={"st.lock": {"lockState": "Locked"}},
+    )
+    poller.rearm_for_confirmation("lock-1")
+    assert not poller.is_running("lock-1")
+    assert poller.young_confirmation("lock-1") is None
 
 
 async def test_stale_tick_does_not_cancel_replacement(scheduled):

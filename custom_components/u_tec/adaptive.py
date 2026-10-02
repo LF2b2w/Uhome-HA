@@ -7,10 +7,12 @@ After a lock or unlock command, poll only that device on a Fibonacci delay
 (1, 2, 3, 5, 8 seconds) until the API reports the commanded state. Stop at
 5 attempts, or when the next delay would be >= the idle scan interval.
 
-A confirmed burst records a watermark. A later poll or push that contradicts
-that watermark inside one idle interval (capped at 60s) is not applied.
-Instead the burst is re-armed and the fresh poll wins, so a stale cloud
-read cannot silently undo a lock, and a real bolt failure is not hidden.
+A confirmed burst records a confirmation. A later poll or push that
+contradicts that confirmation inside one idle interval (capped at 60s)
+is not applied. Instead the burst is re-armed and the fresh poll wins,
+so a stale cloud read cannot silently undo a lock, and a real bolt
+failure is not hidden. A new command clears that confirmation: the
+command is newer evidence than the previous mark.
 """
 
 from __future__ import annotations
@@ -27,20 +29,39 @@ from homeassistant.util import dt as dt_util
 from .const import (
     ADAPTIVE_AGGRESSIVE_INITIAL_DELAY,
     ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS,
+    CONFIRMATION_WINDOW_CAP,
     DEFAULT_SCAN_INTERVAL,
     EVENT_LOCK_COMMAND_FAILED,
     SIGNAL_ADAPTIVE_POLL,
 )
+from .optimistic import is_adaptive_aggressive_enabled
 
 _LOGGER = logging.getLogger(__name__)
 
 LOCK_CAPABILITY = "st.lock"
 LOCK_ATTRIBUTE = "lockState"
-CONFIRMATION_WINDOW_CAP = 60
-_EXHAUSTED = {"max attempts", "idle cap"}
+_LOGGER = logging.getLogger(__name__)
 
 
 def next_fibonacci_delay(delay: int, prev_delay: int) -> int:
+    """Return the next Fibonacci backoff step.
+
+    prev_delay starts equal to the initial delay so the sequence is
+    1, 2, 3, 5, 8 rather than 1, 1, 2, 3, 5.
+    """
+    return int(delay) + int(prev_delay)
+
+
+def confirmation_delays(max_attempts: int = ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS) -> list[int]:
+    """Return the Fibonacci delays a burst will use, from the constants."""
+    delay = ADAPTIVE_AGGRESSIVE_INITIAL_DELAY
+    prev = delay
+    seen = [delay]
+    for _ in range(max(0, max_attempts - 1)):
+        nxt = next_fibonacci_delay(delay, prev)
+        seen.append(nxt)
+        prev, delay = delay, nxt
+    return seen
     """Return the next Fibonacci backoff step.
 
     prev_delay starts equal to the initial delay so the sequence is
@@ -113,7 +134,14 @@ class AdaptivePoller:
         """How long a confirmed state is protected from a contradicting report."""
         return min(CONFIRMATION_WINDOW_CAP, self.idle_interval_seconds())
 
-    def cancel(self, device_id: str, reason: str, *, burst: dict[str, Any] | None = None) -> None:
+    def cancel(
+        self,
+        device_id: str,
+        reason: str,
+        *,
+        burst: dict[str, Any] | None = None,
+        notify: bool = False,
+    ) -> None:
         current = self._bursts.get(device_id)
         if current is None:
             return
@@ -131,19 +159,39 @@ class AdaptivePoller:
             attempts,
             reason,
         )
-        if reason in _EXHAUSTED or reason.startswith("next delay"):
+        if notify:
             self._signal_unconfirmed(device_id, current, reason, attempts)
 
     def cancel_all(self, reason: str = "unload") -> None:
         for device_id in list(self._bursts):
             self.cancel(device_id, reason)
+        self._confirmations.clear()
         for device_id, task in list(self._ticks.items()):
             cancel = getattr(task, "cancel", None)
             if cancel:
                 cancel()
             self._ticks.pop(device_id, None)
 
-    def start(self, device_id: str, expected_locked: bool) -> None:
+    def is_running(self, device_id: str) -> bool:
+        return device_id in self._bursts
+
+    def expected_locked(self, device_id: str) -> bool | None:
+        burst = self._bursts.get(device_id)
+        if burst is None:
+            return None
+        return bool(burst["expected_locked"])
+
+    def start(
+        self,
+        device_id: str,
+        expected_locked: bool,
+        *,
+        clear_confirmation: bool = True,
+    ) -> None:
+        # A new command is newer evidence than the previous confirmation.
+        # A re-arm keeps the confirmation it is defending.
+        if clear_confirmation:
+            self._confirmations.pop(device_id, None)
         idle = self.idle_interval_seconds()
         initial = ADAPTIVE_AGGRESSIVE_INITIAL_DELAY
         if initial >= idle:
@@ -179,6 +227,7 @@ class AdaptivePoller:
             return None
         age = (dt_util.utcnow() - mark["at"]).total_seconds()
         if age > self.confirmation_window_seconds():
+            self._confirmations.pop(device_id, None)
             return None
         return mark
 
@@ -190,8 +239,16 @@ class AdaptivePoller:
             return False
         return observed != mark["locked"]
 
+    def _adaptive_enabled(self, device_id: str) -> bool:
+        entry = getattr(self.coordinator, "config_entry", None)
+        options = getattr(entry, "options", None) or {}
+        return is_adaptive_aggressive_enabled(options, device_id)
+
     def rearm_for_confirmation(self, device_id: str) -> None:
         """Fetch fresh evidence instead of applying a contradicting report."""
+        if not self._adaptive_enabled(device_id):
+            self._confirmations.pop(device_id, None)
+            return
         mark = self.young_confirmation(device_id)
         if mark is None:
             return
@@ -200,7 +257,7 @@ class AdaptivePoller:
             device_id,
             mark["locked"],
         )
-        self.start(device_id, bool(mark["locked"]))
+        self.start(device_id, bool(mark["locked"]), clear_confirmation=False)
 
     def cancel_if_confirmed(
         self,
@@ -256,10 +313,8 @@ class AdaptivePoller:
             attempts,
             reason,
         )
-        bus = getattr(self.coordinator.hass, "bus", None)
-        fire = getattr(bus, "async_fire", None)
-        if fire:
-            fire(
+        bus = self.coordinator.hass.bus
+        bus.async_fire(
                 EVENT_LOCK_COMMAND_FAILED,
                 {
                     "device_id": device_id,
@@ -316,10 +371,14 @@ class AdaptivePoller:
             )
             confirmed = actual is not None and actual == expected
         except ConfigEntryAuthFailed:
-            raise
+            if self._bursts.get(device_id) is burst:
+                self.cancel(device_id, "auth failed", burst=burst, notify=True)
+            return
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning(
-                "Adaptive aggressive poll failed for %s: %s", device_id, err
+                "Adaptive aggressive poll failed for %s: %s",
+                device_id,
+                type(err).__name__,
             )
 
         if self._bursts.get(device_id) is not burst:
@@ -338,14 +397,14 @@ class AdaptivePoller:
             return
 
         if burst["attempt"] >= ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS:
-            self.cancel(device_id, "max attempts", burst=burst)
+            self.cancel(device_id, "max attempts", burst=burst, notify=True)
             return
 
         prev_delay = int(burst.get("prev_delay", delay))
         next_delay = next_fibonacci_delay(delay, prev_delay)
         idle = self.idle_interval_seconds()
         if next_delay >= idle:
-            self.cancel(device_id, "idle cap", burst=burst)
+            self.cancel(device_id, "idle cap", burst=burst, notify=True)
             return
 
         burst["prev_delay"] = delay

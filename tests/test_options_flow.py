@@ -1,6 +1,6 @@
 """Tests for OptionsFlowHandler._current_mode helper."""
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from custom_components.u_tec.config_flow import _current_mode
 from custom_components.u_tec.const import DOMAIN
@@ -240,3 +240,29 @@ async def test_adaptive_aggressive_custom_picks_locks(hass):
     )
     assert result["type"] == "create_entry"
     assert result["data"][CONF_ADAPTIVE_AGGRESSIVE_LOCKS] == ["lock-1"]
+
+
+async def test_device_selection_keeps_other_options(hass):
+    from custom_components.u_tec.const import CONF_ADAPTIVE_AGGRESSIVE_LOCKS
+
+    entry = make_config_entry()
+    entry.options = {CONF_ADAPTIVE_AGGRESSIVE_LOCKS: True, "devices": ["lock-1"]}
+    entry.add_to_hass(hass)
+    api = MagicMock()
+    api.discover_devices = AsyncMock(return_value={
+        "payload": {"devices": [{"id": "lock-1", "name": "Latch", "category": "lock"}]}
+    })
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"api": api}
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    flow_id = result["flow_id"]
+    result = await hass.config_entries.options.async_configure(
+        flow_id, user_input={"next_step_id": "get_devices"},
+    )
+    assert result["step_id"] == "device_selection"
+    result = await hass.config_entries.options.async_configure(
+        flow_id, user_input={"selected_devices": ["lock-1"]},
+    )
+    assert result["type"] == "create_entry"
+    assert result["data"]["devices"] == ["lock-1"]
+    assert result["data"][CONF_ADAPTIVE_AGGRESSIVE_LOCKS] is True

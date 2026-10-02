@@ -45,6 +45,8 @@ MAX_SCAN_INTERVAL = 3600
 # delay >= the idle scan interval.
 ADAPTIVE_AGGRESSIVE_INITIAL_DELAY = 1
 ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS = 5
+# A confirmed state is protected for one idle interval, never longer than this.
+CONFIRMATION_WINDOW_CAP = 60
 
 # Key used inside hass.data[DOMAIN] for yaml-sourced config (separate from entry IDs).
 YAML_CONFIG_KEY = "_yaml_config"

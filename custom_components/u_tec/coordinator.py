@@ -299,11 +299,20 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     if isinstance(raw, list):
                         devices_data = raw
                     else:
-                        _LOGGER.warning("Unexpected 'devices' value in push payload: %s", raw)
+                        _LOGGER.warning(
+                            "Unexpected 'devices' value in push payload: %s",
+                            type(raw).__name__,
+                        )
                 else:
-                    _LOGGER.warning("Unexpected push payload type %s: %s", type(payload), push_data)
+                    _LOGGER.warning(
+                        "Unexpected push payload type %s",
+                        type(payload).__name__,
+                    )
             else:
-                _LOGGER.warning("Unrecognised push data type %s: %s", type(push_data), push_data)
+                _LOGGER.warning(
+                    "Unrecognised push data type %s",
+                    type(push_data).__name__,
+                )
 
             if not devices_data:
                 _LOGGER.debug("No device data found in push update")
@@ -311,7 +320,10 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
 
             for device_data in devices_data:
                 if not isinstance(device_data, dict):
-                    _LOGGER.warning("Skipping non-dict device entry in push update: %s", device_data)
+                    _LOGGER.warning(
+                        "Skipping non-dict device entry in push update: %s",
+                        type(device_data).__name__,
+                    )
                     continue
 
                 device_id = device_data.get("id")
