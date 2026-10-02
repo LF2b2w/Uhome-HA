@@ -15,6 +15,7 @@ from custom_components.u_tec.const import (
     CONF_OPTIMISTIC_LOCKS,
     DOMAIN,
     OPTIMISTIC_TIMEOUT,
+    SIGNAL_ADAPTIVE_POLL,
     SIGNAL_DEVICE_UPDATE,
 )
 from custom_components.u_tec.lock import (
@@ -319,15 +320,15 @@ async def test_async_added_to_hass_registers_dispatcher(coord_with_lock, hass):
     ent.async_write_ha_state = MagicMock()
     ent.async_on_remove = MagicMock()
 
-    expected_signal = f"{SIGNAL_DEVICE_UPDATE}_{lock.device_id}"
+    expected_push = f"{SIGNAL_DEVICE_UPDATE}_{lock.device_id}"
+    expected_poll = f"{SIGNAL_ADAPTIVE_POLL}_{lock.device_id}"
 
     with patch("custom_components.u_tec.lock.async_dispatcher_connect") as mock_connect:
         mock_connect.return_value = MagicMock()
         await ent.async_added_to_hass()
 
-    mock_connect.assert_called_once()
-    call_args = mock_connect.call_args
-    assert call_args[0][1] == expected_signal
+    signals = [call.args[1] for call in mock_connect.call_args_list]
+    assert signals == [expected_push, expected_poll]
 
 
 # ---------------------------------------------------------------------------
