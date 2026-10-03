@@ -342,7 +342,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         NumberSelectorConfig(
                             min=MIN_SCAN_INTERVAL,
                             max=MAX_SCAN_INTERVAL,
-                            step=5,
+                            step=1,
                             unit_of_measurement="seconds",
                             mode=NumberSelectorMode.BOX,
                         )

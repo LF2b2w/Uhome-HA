@@ -36,7 +36,7 @@ CONF_DISCOVERY_INTERVAL = "discovery_interval"
 
 DEFAULT_SCAN_INTERVAL = 10  # seconds
 DEFAULT_DISCOVERY_INTERVAL = 300  # seconds (5 minutes)
-MIN_SCAN_INTERVAL = 10
+MIN_SCAN_INTERVAL = 1
 MAX_SCAN_INTERVAL = 3600
 
 # Adaptive Aggressive lock confirmation. After a lock/unlock command, poll

@@ -90,7 +90,7 @@
       },
       "polling_interval": {
         "title": "Polling Interval",
-        "description": "How often Home Assistant should poll the U-Tec API for device state. 20 seconds is the recommended lock interval when Adaptive Aggressive is on: slow enough to be kind to the API, and still long enough for the full 1/2/3/5/8 confirmation sequence. With reliable push you can raise this further (300\u2013600 seconds). The default of 10 seconds suits installs that rely mainly on polling.",
+        "description": "How often Home Assistant should poll the U-Tec API for device state (1–3600 seconds). A 1-second interval makes ten times as many scheduled polls as the 10-second default; cloud throttling and propagation delays may limit the benefit. 20 seconds is the recommended lock interval when Adaptive Aggressive is on: slow enough to be kind to the API, and still long enough for the full 1/2/3/5/8 confirmation sequence. With reliable push you can raise this further (300\u2013600 seconds). The default of 10 seconds suits installs that rely mainly on polling.",
         "data": {
           "scan_interval": "Poll interval"
         }

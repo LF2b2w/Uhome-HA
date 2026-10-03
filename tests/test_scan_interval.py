@@ -32,7 +32,7 @@ def test_resolve_falls_back_to_default(hass):
 
 def test_resolve_clamps_yaml_below_minimum(hass):
     entry = make_config_entry(options={})
-    hass.data.setdefault(DOMAIN, {})[YAML_CONFIG_KEY] = {CONF_SCAN_INTERVAL: 5}
+    hass.data.setdefault(DOMAIN, {})[YAML_CONFIG_KEY] = {CONF_SCAN_INTERVAL: 0}
     assert _resolve_scan_interval(hass, entry) == MIN_SCAN_INTERVAL
 
 
