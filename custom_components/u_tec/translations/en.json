@@ -1,61 +1,130 @@
 {
-    "config": {
-        "step": {
-            "user": {
-                "menu_options": {
-                "title": "Connect to Your Service",
-                "description": "Please set up Your Integration"
-                }
-            }
-        },
-        "abort": {
-            "already_configured": "Account is already configured"
-        },
-        "error": {
-            "auth": "Authentication failed"
+  "config": {
+    "step": {
+      "replace_credentials": {
+        "title": "U-Tec credentials",
+        "description": "Enter your Client ID and Client Secret from the Xthings app (My Account → OpenAPI). Submitting will start the U-Tec authorization. The Client Secret is never displayed back — re-enter it here even if you are only rotating the secret.",
+        "data": {
+          "client_id": "Client ID",
+          "client_secret": "Client Secret"
         }
+      }
     },
-    "options": {
-        "step": {
-            "optimistic_updates": {
-                "title": "Optimistic Updates",
-                "description": "Pick how each device type should reflect commands. 'All' writes optimistic state for every device of that type, 'None' waits for confirmed state, 'Custom' lets you pick specific devices.",
-                "data": {
-                    "lights_mode": "Lights",
-                    "switches_mode": "Switches",
-                    "locks_mode": "Locks"
-                }
-            },
-            "pick_lights": {
-                "title": "Optimistic Lights",
-                "description": "Select the light devices that should use optimistic updates. Unselected lights will wait for confirmed state.",
-                "data": {
-                    "optimistic_lights": "Optimistic lights"
-                }
-            },
-            "pick_switches": {
-                "title": "Optimistic Switches",
-                "description": "Select the switch devices that should use optimistic updates. Unselected switches will wait for confirmed state.",
-                "data": {
-                    "optimistic_switches": "Optimistic switches"
-                }
-            },
-            "pick_locks": {
-                "title": "Optimistic Locks",
-                "description": "Select the lock devices that should use optimistic updates. Unselected locks will wait for confirmed state.",
-                "data": {
-                    "optimistic_locks": "Optimistic locks"
-                }
-            }
-        }
+    "abort": {
+      "no_devices": "No devices were found",
+      "already_configured": "[%key:common::config_flow::abort::already_configured_account%]",
+      "already_in_progress": "[%key:common::config_flow::abort::already_in_progress%]",
+      "oauth_error": "[%key:common::config_flow::abort::oauth2_error%]",
+      "oauth_failed": "[%key:common::config_flow::abort::oauth2_failed%]",
+      "oauth_timeout": "[%key:common::config_flow::abort::oauth2_timeout%]",
+      "oauth_unauthorized": "[%key:common::config_flow::abort::oauth2_unauthorized%]",
+      "missing_configuration": "[%key:common::config_flow::abort::oauth2_missing_configuration%]",
+      "authorize_url_timeout": "[%key:common::config_flow::abort::oauth2_authorize_url_timeout%]",
+      "no_url_available": "[%key:common::config_flow::abort::oauth2_no_url_available%]",
+      "user_rejected_authorize": "[%key:common::config_flow::abort::oauth2_user_rejected_authorize%]",
+      "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]",
+      "single_instance_allowed": "[%key:common::config_flow::abort::single_instance_allowed%]"
     },
-    "selector": {
-        "optimistic_mode": {
-            "options": {
-                "all": "All devices optimistic",
-                "none": "No devices optimistic",
-                "custom": "Custom per-device"
-            }
-        }
+    "create_entry": {
+      "default": "[%key:common::config_flow::create_entry::authenticated%]"
+    },
+    "error": {
+      "no_api_conf": "API not available",
+      "CE_invalid": "Invalid configuration",
+      "cannot_connect": "Failed to connect to API",
+      "empty_credentials": "Both Client ID and Client Secret are required."
     }
+  },
+  "options": {
+    "step": {
+      "update_push": {
+        "title": "Configure Uhome",
+        "description": "Enable or disable push notifications for device updates",
+        "data": {
+          "push_enabled": "Enable push notifications"
+        }
+      },
+      "push_device_selection": {
+        "title": "Select Devices for Push Updates",
+        "description": "Choose which devices should receive push updates. If none are selected, all devices will receive updates.",
+        "data": {
+          "push_devices": "Devices"
+        }
+      },
+      "device_selection": {
+        "title": "Select Active Devices",
+        "description": "Choose which devices should be active in HomeAssistant.",
+        "data": {
+          "selected_devices": "Devices"
+        }
+      },
+      "optimistic_updates": {
+        "title": "Optimistic Updates",
+        "description": "Pick how each device type should reflect commands. 'All' writes optimistic state for every device of that type, 'None' waits for confirmed state, 'Custom' lets you pick specific devices.",
+        "data": {
+          "lights_mode": "Lights",
+          "switches_mode": "Switches",
+          "locks_mode": "Locks"
+        }
+      },
+      "pick_lights": {
+        "title": "Optimistic Lights",
+        "description": "Select the light devices that should use optimistic updates. Unselected lights will wait for confirmed state.",
+        "data": {
+          "optimistic_lights": "Optimistic lights"
+        }
+      },
+      "pick_switches": {
+        "title": "Optimistic Switches",
+        "description": "Select the switch devices that should use optimistic updates. Unselected switches will wait for confirmed state.",
+        "data": {
+          "optimistic_switches": "Optimistic switches"
+        }
+      },
+      "pick_locks": {
+        "title": "Optimistic Locks",
+        "description": "Select the lock devices that should use optimistic updates. Unselected locks will wait for confirmed state.",
+        "data": {
+          "optimistic_locks": "Optimistic locks"
+        }
+      },
+      "polling_interval": {
+        "title": "Polling Interval",
+        "description": "How often Home Assistant should poll the U-Tec API for device state. 20 seconds is the recommended lock interval when Adaptive Aggressive is on: slow enough to be kind to the API, and still long enough for the full 1/2/3/5/8 confirmation sequence. With reliable push you can raise this further (300–600 seconds). The default of 10 seconds suits installs that rely mainly on polling.",
+        "data": {
+          "scan_interval": "Poll interval"
+        }
+      },
+      "adaptive_aggressive": {
+        "title": "Adaptive Aggressive",
+        "description": "After a lock or unlock command, poll only that lock on a Fibonacci delay (1s, 2s, 3s, 5s, 8s) until the API reports the commanded state. Recommended on. U-Tec push often never arrives, and this burst stops at 5 attempts or when the next delay would be at least the idle poll interval. Passage mode is skipped.",
+        "data": {
+          "locks_mode": "Locks"
+        }
+      },
+      "pick_adaptive_locks": {
+        "title": "Adaptive Aggressive Locks",
+        "description": "Select the locks that should get a confirmation burst after a command. Unselected locks wait for the idle poll or a push.",
+        "data": {
+          "adaptive_aggressive_locks": "Adaptive Aggressive locks"
+        }
+      }
+    }
+  },
+  "selector": {
+    "optimistic_mode": {
+      "options": {
+        "all": "All devices optimistic",
+        "none": "No devices optimistic",
+        "custom": "Custom per-device"
+      }
+    },
+    "adaptive_mode": {
+      "options": {
+        "all": "All locks (recommended)",
+        "none": "Off",
+        "custom": "Custom per lock"
+      }
+    }
+  }
 }

@@ -55,8 +55,11 @@ class UhomeDoorSensor(CoordinatorEntity, BinarySensorEntity):
 
     @property
     def available(self) -> bool:
-        """Return True if entity is available."""
-        return self.coordinator.last_update_success and self._device.available
+        """Return True if entity is available.
+
+        Unavailable only when the device is offline or two consecutive polls failed.
+        """
+        return self.coordinator.poll_healthy_enough and self._device.available
 
     @property
     def is_on(self) -> bool | None:

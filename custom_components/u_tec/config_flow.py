@@ -26,6 +26,9 @@ from homeassistant.helpers import config_entry_oauth2_flow
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.selector import (
     BooleanSelector,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
@@ -37,16 +40,22 @@ from utec_client.devices.lock import Lock as UhomeLock
 from utec_client.devices.switch import Switch as UhomeSwitch
 
 from .const import (
+    CONF_ADAPTIVE_AGGRESSIVE_LOCKS,
     CONF_HA_DEVICES,
     CONF_OPTIMISTIC_LIGHTS,
     CONF_OPTIMISTIC_LOCKS,
     CONF_OPTIMISTIC_SWITCHES,
     CONF_PUSH_DEVICES,
     CONF_PUSH_ENABLED,
+    CONF_SCAN_INTERVAL,
     DEFAULT_API_SCOPE,
+    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    MAX_SCAN_INTERVAL,
+    MIN_SCAN_INTERVAL,
     OAUTH2_AUTHORIZE,
     OAUTH2_TOKEN,
+    YAML_CONFIG_KEY,
 )
 from .oauth import UtecLocalOAuth2Implementation
 
@@ -57,9 +66,20 @@ OPTIMISTIC_MODE_CUSTOM = "custom"
 OPTIMISTIC_MODES = [OPTIMISTIC_MODE_ALL, OPTIMISTIC_MODE_NONE, OPTIMISTIC_MODE_CUSTOM]
 
 
-def _current_mode(value: bool | list[str] | None) -> str:
-    """Infer the mode selector default from a stored option value."""
-    if value is True or value is None:
+def _current_mode(
+    value: bool | list[str] | None,
+    *,
+    absent: str = OPTIMISTIC_MODE_ALL,
+) -> str:
+    """Infer the mode selector default from a stored option value.
+
+    ``absent`` is load-bearing. Optimistic updates default on. Adaptive
+    Aggressive defaults off. Unifying these without the argument would turn
+    confirmation bursts on for every lock.
+    """
+    if value is None:
+        return absent
+    if value is True:
         return OPTIMISTIC_MODE_ALL
     if value is False:
         return OPTIMISTIC_MODE_NONE
@@ -117,19 +137,7 @@ class UhomeOAuth2FlowHandler(
     async def async_step_replace_credentials(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Render the credential form and start OAuth with an in-memory implementation.
-
-        Used by initial setup (via async_step_user), issue #50 recovery (stale creds
-        in HA's app-creds store from a prior failed attempt), and reconfigure of a
-        working entry (via async_step_reconfigure).
-
-        The application_credentials store is NOT mutated here. We build an in-memory
-        LocalOAuth2Implementation with the entered creds, set self.flow_impl directly,
-        and jump to async_step_auth — bypassing async_step_pick_implementation. The
-        actual store update happens in async_oauth_create_entry, on the OAuth-success
-        path only. Consequence: if OAuth fails, any existing credential is untouched
-        and a working config entry continues to refresh against valid creds.
-        """
+        """Render the credential form and start OAuth with an in-memory implementation."""
         if user_input is not None:
             client_id = (user_input.get("client_id") or "").strip()
             client_secret = (user_input.get("client_secret") or "").strip()
@@ -141,9 +149,6 @@ class UhomeOAuth2FlowHandler(
                 )
 
             self._pending_credential = ClientCredential(client_id, client_secret)
-            # Unwrapping implementation: U-Tec's /token returns the OAuth fields
-            # nested under {"code","data"}, which HA's stock implementation can't
-            # parse. See oauth.py.
             self.flow_impl = UtecLocalOAuth2Implementation(
                 self.hass,
                 DOMAIN,
@@ -181,13 +186,7 @@ class UhomeOAuth2FlowHandler(
     async def async_oauth_create_entry(
         self, data: dict
     ) -> ConfigFlowResult:
-        """Create or update the config entry depending on the flow source.
-
-        If credentials were entered via async_step_replace_credentials and OAuth
-        succeeded, commit them to the application_credentials store now and rewrite
-        the entry's auth_implementation reference to the standard "u_tec" auth_domain
-        (which is what async_get_implementations resolves against).
-        """
+        """Create or update the config entry depending on the flow source."""
         if self._pending_credential is not None:
             await self._commit_pending_credential()
             self._pending_credential = None
@@ -211,35 +210,16 @@ class UhomeOAuth2FlowHandler(
 
         options = {
             CONF_PUSH_ENABLED: True,
-            CONF_PUSH_DEVICES: [],  # Empty list means all devices
+            CONF_PUSH_DEVICES: [],
             CONF_HA_DEVICES: [],
         }
-        # Static title — flow_impl.name is "Configuration.yaml" for the in-memory
-        # LocalOAuth2Implementation built in async_step_replace_credentials, which
-        # would surface as the entry title in the HA UI. Use the integration name.
         return self.async_create_entry(
             title="U-Tec", data=data, options=options
         )
 
     async def _commit_pending_credential(self) -> None:
-        """Persist the deferred credential to the application_credentials store.
-
-        Called from async_oauth_create_entry on the OAuth-success path. For items
-        whose client_id matches the new one, delete BEFORE import — otherwise
-        async_import_item is a no-op on duplicate suggested_id and the secret
-        wouldn't rotate. Delete failures in that pre-import phase are therefore
-        re-raised so the flow aborts instead of reporting a phantom success. For
-        items with a different client_id, import first then delete: HA's
-        async_delete_item refuses to delete a credential currently
-        referenced by an entry's auth_implementation, but the new cred has the
-        canonical auth_domain ("u_tec") so importing it first means the entry
-        can resolve a valid implementation regardless of whether the legacy
-        delete succeeds. (Legacy entries with auth_implementation pointing at
-        a credential item_id are normalised to the canonical auth_domain by
-        async_migrate_entry at integration setup, so by the time this runs the
-        delete should not be blocked.)
-        """
-        assert self._pending_credential is not None  # guarded by caller
+        """Persist the deferred credential to the application_credentials store."""
+        assert self._pending_credential is not None
         new_client_id = self._pending_credential.client_id
 
         storage = self.hass.data.get(APP_CREDS_DATA)
@@ -255,9 +235,6 @@ class UhomeOAuth2FlowHandler(
                     other_ids.append(item[APP_CREDS_ID])
 
         for item_id in matching_ids:
-            # Delete failure here cannot be swallowed: async_import_client_credential
-            # is a no-op on duplicate suggested_id, so a leftover record means the
-            # secret silently doesn't rotate while OAuth still reports success.
             try:
                 await storage.async_delete_item(item_id)
             except Exception as err:  # noqa: BLE001
@@ -289,13 +266,7 @@ class UhomeOAuth2FlowHandler(
     async def async_step_reauth(
         self, entry_data: Mapping[str, Any]
     ) -> ConfigFlowResult:
-        """Re-authenticate an existing entry.
-
-        Dispatch directly to the credentials form — no confirmation step.
-        The framework hands us the entry's data dict but we don't need it:
-        the form prefills client_id from the application_credentials store,
-        and OAuth-success updates the entry in async_oauth_create_entry.
-        """
+        """Re-authenticate an existing entry."""
         return await self.async_step_replace_credentials()
 
     async def async_step_reconfigure(
@@ -312,6 +283,7 @@ class UhomeOAuth2FlowHandler(
         """Get the options flow for this handler."""
         return OptionsFlowHandler(config_entry)
 
+
 class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow with proper device discovery."""
 
@@ -323,6 +295,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         self.options = dict(config_entry.options)
         self._pending_pickers: list[str] = []
 
+    def _default_scan_interval(self) -> int:
+        """UI default: saved option, else YAML, else built-in default."""
+        if CONF_SCAN_INTERVAL in self.options:
+            current = int(self.options[CONF_SCAN_INTERVAL])
+        else:
+            yaml_config = self.hass.data.get(DOMAIN, {}).get(YAML_CONFIG_KEY, {})
+            current = int(yaml_config.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+        return max(MIN_SCAN_INTERVAL, min(MAX_SCAN_INTERVAL, current))
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -333,7 +314,41 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 "update_push": "Update Push Status",
                 "get_devices": "Select Active Devices",
                 "optimistic_updates": "Configure Optimistic Updates",
+                "adaptive_aggressive": "Adaptive Aggressive",
+                "polling_interval": "Polling Interval",
             },
+        )
+
+    async def async_step_polling_interval(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Configure how often device state is polled from the U-Tec API."""
+        if user_input is not None:
+            self.options[CONF_SCAN_INTERVAL] = vol.All(
+                vol.Coerce(int),
+                vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL),
+            )(user_input[CONF_SCAN_INTERVAL])
+            return self.async_create_entry(title="", data=self.options)
+
+        return self.async_show_form(
+            step_id="polling_interval",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_SCAN_INTERVAL,
+                        default=self._default_scan_interval(),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=MIN_SCAN_INTERVAL,
+                            max=MAX_SCAN_INTERVAL,
+                            step=5,
+                            unit_of_measurement="seconds",
+                            mode=NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+            ),
         )
 
     async def async_step_update_push(
@@ -377,7 +392,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             device_id: device.name for device_id, device in coordinator.devices.items()
         }
 
-        # If no devices are selected, default to all devices
         selected_devices = self.options.get(CONF_PUSH_DEVICES, [])
         if not selected_devices:
             selected_devices = list(self.devices.keys())
@@ -477,7 +491,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         }
 
         if not devices:
-            # No devices of this type to pick from — skip to next picker.
             self.options[conf_key] = []
             self._pending_pickers.pop(0)
             return await self._advance_optimistic_picker()
@@ -530,6 +543,78 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             user_input=user_input,
         )
 
+    async def async_step_adaptive_aggressive(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Configure Adaptive Aggressive confirmation polling for locks."""
+        mode_selector = SelectSelector(
+            SelectSelectorConfig(
+                options=OPTIMISTIC_MODES,
+                mode=SelectSelectorMode.DROPDOWN,
+                translation_key="adaptive_mode",
+            )
+        )
+        if user_input is not None:
+            mode = user_input["locks_mode"]
+            if mode == OPTIMISTIC_MODE_ALL:
+                self.options[CONF_ADAPTIVE_AGGRESSIVE_LOCKS] = True
+                return self.async_create_entry(title="", data=self.options)
+            if mode == OPTIMISTIC_MODE_NONE:
+                self.options[CONF_ADAPTIVE_AGGRESSIVE_LOCKS] = False
+                return self.async_create_entry(title="", data=self.options)
+            return await self.async_step_pick_adaptive_locks()
+
+        return self.async_show_form(
+            step_id="adaptive_aggressive",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "locks_mode",
+                        default=_current_mode(
+                            self.options.get(CONF_ADAPTIVE_AGGRESSIVE_LOCKS),
+                            absent=OPTIMISTIC_MODE_NONE,
+                        ),
+                    ): mode_selector,
+                }
+            ),
+        )
+
+    async def async_step_pick_adaptive_locks(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Pick which locks get Adaptive Aggressive confirmation bursts."""
+        if user_input is not None:
+            self.options[CONF_ADAPTIVE_AGGRESSIVE_LOCKS] = user_input[
+                CONF_ADAPTIVE_AGGRESSIVE_LOCKS
+            ]
+            return self.async_create_entry(title="", data=self.options)
+
+        coordinator = self.hass.data[DOMAIN][self.config_entry.entry_id]["coordinator"]
+        devices = {
+            device_id: device.name
+            for device_id, device in coordinator.devices.items()
+            if isinstance(device, UhomeLock)
+        }
+        if not devices:
+            self.options[CONF_ADAPTIVE_AGGRESSIVE_LOCKS] = []
+            return self.async_create_entry(title="", data=self.options)
+
+        stored = self.options.get(CONF_ADAPTIVE_AGGRESSIVE_LOCKS)
+        default = stored if isinstance(stored, list) else list(devices.keys())
+        return self.async_show_form(
+            step_id="pick_adaptive_locks",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_ADAPTIVE_AGGRESSIVE_LOCKS,
+                        default=default,
+                    ): cv.multi_select(devices),
+                }
+            ),
+        )
+
     async def async_step_get_devices(
         self,
         user_input: dict[str, Any] | None = None
@@ -554,15 +639,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if not self.devices:
             _LOGGER.error("No devices found")
             return self.async_abort(reason="no devices found")
-        # Get the current selection from the config entry options
         current_selection = self.config_entry.options.get("devices", [])
 
         if user_input is not None:
             return self.async_create_entry(
-                title="", data={"devices": user_input["selected_devices"]}
+                title="",
+                data={**self.options, "devices": user_input["selected_devices"]},
             )
 
-        # Show the device selection form
         return self.async_show_form(
             step_id="device_selection",
             data_schema=vol.Schema(
@@ -574,6 +658,3 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 }
             ),
         )
-
-
-

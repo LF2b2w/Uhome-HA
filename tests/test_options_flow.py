@@ -1,6 +1,6 @@
 """Tests for OptionsFlowHandler._current_mode helper."""
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from custom_components.u_tec.config_flow import _current_mode
 from custom_components.u_tec.const import DOMAIN
@@ -175,3 +175,93 @@ async def test_optimistic_none_skips_picker(hass):
     assert result["data"][CONF_OPTIMISTIC_LIGHTS] is False
     assert result["data"][CONF_OPTIMISTIC_SWITCHES] is True
     assert result["data"][CONF_OPTIMISTIC_LOCKS] is True
+
+
+def test_current_adaptive_mode_defaults_off():
+    from custom_components.u_tec.config_flow import _current_mode
+
+    assert _current_mode(None, absent="none") == "none"
+    assert _current_mode(False, absent="none") == "none"
+    assert _current_mode(True, absent="none") == "all"
+    assert _current_mode(["lock-1"], absent="none") == "custom"
+    assert _current_mode(None) == "all"
+
+
+async def test_init_menu_includes_adaptive_aggressive(hass):
+    entry = make_config_entry()
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert "adaptive_aggressive" in result["menu_options"]
+
+
+async def test_adaptive_aggressive_all(hass):
+    from custom_components.u_tec.const import CONF_ADAPTIVE_AGGRESSIVE_LOCKS
+
+    entry = make_config_entry()
+    entry.add_to_hass(hass)
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+        "coordinator": MagicMock(devices={"lock-1": make_fake_lock("lock-1")}),
+    }
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    flow_id = result["flow_id"]
+    result = await hass.config_entries.options.async_configure(
+        flow_id, user_input={"next_step_id": "adaptive_aggressive"},
+    )
+    assert result["step_id"] == "adaptive_aggressive"
+    result = await hass.config_entries.options.async_configure(
+        flow_id, user_input={"locks_mode": "all"},
+    )
+    assert result["type"] == "create_entry"
+    assert result["data"][CONF_ADAPTIVE_AGGRESSIVE_LOCKS] is True
+
+
+async def test_adaptive_aggressive_custom_picks_locks(hass):
+    from custom_components.u_tec.const import CONF_ADAPTIVE_AGGRESSIVE_LOCKS
+
+    entry = make_config_entry()
+    entry.add_to_hass(hass)
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+        "coordinator": MagicMock(devices={"lock-1": make_fake_lock("lock-1")}),
+    }
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    flow_id = result["flow_id"]
+    await hass.config_entries.options.async_configure(
+        flow_id, user_input={"next_step_id": "adaptive_aggressive"},
+    )
+    result = await hass.config_entries.options.async_configure(
+        flow_id, user_input={"locks_mode": "custom"},
+    )
+    assert result["step_id"] == "pick_adaptive_locks"
+    result = await hass.config_entries.options.async_configure(
+        flow_id, user_input={CONF_ADAPTIVE_AGGRESSIVE_LOCKS: ["lock-1"]},
+    )
+    assert result["type"] == "create_entry"
+    assert result["data"][CONF_ADAPTIVE_AGGRESSIVE_LOCKS] == ["lock-1"]
+
+
+async def test_device_selection_keeps_other_options(hass):
+    from custom_components.u_tec.const import CONF_ADAPTIVE_AGGRESSIVE_LOCKS
+
+    entry = make_config_entry(options={CONF_ADAPTIVE_AGGRESSIVE_LOCKS: True, "devices": ["lock-1"]})
+    entry.add_to_hass(hass)
+    api = MagicMock()
+    api.discover_devices = AsyncMock(return_value={
+        "payload": {"devices": [{"id": "lock-1", "name": "Latch", "category": "lock"}]}
+    })
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"api": api}
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    flow_id = result["flow_id"]
+    result = await hass.config_entries.options.async_configure(
+        flow_id, user_input={"next_step_id": "get_devices"},
+    )
+    assert result["step_id"] == "device_selection"
+    result = await hass.config_entries.options.async_configure(
+        flow_id, user_input={"selected_devices": ["lock-1"]},
+    )
+    assert result["type"] == "create_entry"
+    assert result["data"]["devices"] == ["lock-1"]
+    assert result["data"][CONF_ADAPTIVE_AGGRESSIVE_LOCKS] is True

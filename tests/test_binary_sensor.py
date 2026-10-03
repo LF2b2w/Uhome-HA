@@ -15,6 +15,7 @@ def door_sensor_setup(hass):
     coord = MagicMock()
     coord.devices = {"lock-1": lock}
     coord.last_update_success = True
+    coord.poll_healthy_enough = True
     return coord, lock
 
 
@@ -37,7 +38,7 @@ def test_available_requires_coordinator_and_device(door_sensor_setup):
     ent = UhomeDoorSensor(coord, "lock-1")
     assert ent.available is True
 
-    coord.last_update_success = False
+    coord.poll_healthy_enough = False
     assert ent.available is False
 
 
