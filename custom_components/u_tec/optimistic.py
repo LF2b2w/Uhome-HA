@@ -68,7 +68,7 @@ def is_adaptive_aggressive_enabled(
 def push_asserts_state(push_data: Any, capability: str, attribute: str) -> bool:
     """Return True if a push payload actually carries the given capability state.
 
-    U-Tec pushes are full-state replaces (utec_py update_state_data assigns the
+    U-Tec pushes are full-state replaces (utec_client update_state_data assigns the
     payload wholesale), and the device accessors fall back to a default when a
     capability is absent -- e.g. Lock.is_locked and Switch.is_on both return
     False when their capability is missing, which is indistinguishable from a

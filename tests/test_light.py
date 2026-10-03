@@ -169,7 +169,7 @@ def test_assumed_state_false_when_optimistic_disabled(hass):
 
 async def test_turn_on_wraps_device_error(coord_with_light, hass):
     from homeassistant.exceptions import HomeAssistantError
-    from utec_py.exceptions import DeviceError
+    from utec_client.exceptions import DeviceError
 
     coord, light = coord_with_light
     light.turn_on.side_effect = DeviceError("nope")
@@ -183,7 +183,7 @@ async def test_turn_on_wraps_device_error(coord_with_light, hass):
 
 async def test_turn_off_wraps_device_error(coord_with_light, hass):
     from homeassistant.exceptions import HomeAssistantError
-    from utec_py.exceptions import DeviceError
+    from utec_client.exceptions import DeviceError
 
     coord, light = coord_with_light
     light.turn_off.side_effect = DeviceError("nope")
@@ -391,7 +391,7 @@ def test_color_temp_kelvin_returns_device_value(coord_with_light):
 async def test_turn_on_device_error_logs_and_raises(coord_with_light, hass):
     """DeviceError → log error + raise HomeAssistantError."""
     from homeassistant.exceptions import HomeAssistantError
-    from utec_py.exceptions import DeviceError
+    from utec_client.exceptions import DeviceError
 
     coord, light = coord_with_light
     light.turn_on.side_effect = DeviceError("boom")
@@ -438,7 +438,7 @@ async def test_turn_on_no_optimistic_write_when_disabled(hass):
 async def test_turn_off_device_error_logs_and_raises(coord_with_light, hass):
     """DeviceError in turn_off → raise HomeAssistantError."""
     from homeassistant.exceptions import HomeAssistantError
-    from utec_py.exceptions import DeviceError
+    from utec_client.exceptions import DeviceError
 
     coord, light = coord_with_light
     light.turn_off.side_effect = DeviceError("bang")

@@ -4,7 +4,7 @@ import pytest
 
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
-from utec_py.exceptions import ApiError, AuthenticationError
+from utec_client.exceptions import ApiError, AuthenticationError
 
 from custom_components.u_tec.const import MAX_CONSECUTIVE_UPDATE_FAILURES
 from custom_components.u_tec.coordinator import UhomeDataUpdateCoordinator

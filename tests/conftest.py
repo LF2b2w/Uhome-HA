@@ -68,8 +68,8 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 
 @pytest.fixture
 def mock_uhome_api():
-    """Mock utec_py.api.UHomeApi instance."""
-    from utec_py.api import UHomeApi
+    """Mock utec_client.api.UHomeApi instance."""
+    from utec_client.api import UHomeApi
 
     api = MagicMock(spec=UHomeApi)
     api.send_command = AsyncMock(return_value={"payload": {"devices": []}})

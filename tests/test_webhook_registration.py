@@ -138,7 +138,7 @@ async def test_register_falls_back_through_url_strategies(hass, mock_uhome_api):
 
 
 async def test_register_fails_when_api_set_push_status_errors(hass, mock_uhome_api):
-    from utec_py.exceptions import ApiError
+    from utec_client.exceptions import ApiError
 
     h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
     mock_uhome_api.set_push_status.side_effect = ApiError(500, "fail")

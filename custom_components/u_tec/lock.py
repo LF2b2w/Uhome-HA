@@ -13,8 +13,8 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
-from utec_py.devices.lock import Lock as UhomeLock
-from utec_py.exceptions import DeviceError
+from utec_client.devices.lock import Lock as UhomeLock
+from utec_client.exceptions import DeviceError
 
 from .const import (
     CONF_OPTIMISTIC_LOCKS,
@@ -36,7 +36,7 @@ _LOGGER = logging.getLogger(__name__)
 # the light/switch fixes mirror this logic but are unverified on live
 # hardware. https://github.com/LF2b2w/Uhome-HA/issues/58
 
-# utec_py maps LockMode.PASSAGE -> "Passage" (devices/lock.py::lock_mode).
+# utec_client maps LockMode.PASSAGE -> "Passage" (devices/lock.py::lock_mode).
 # In this mode the device ignores lock/unlock commands outright.
 PASSAGE_MODE = "Passage"
 

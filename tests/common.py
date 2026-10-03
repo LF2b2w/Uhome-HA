@@ -46,8 +46,8 @@ def make_fake_light(
     available: bool = True,
     supported_capabilities: set | None = None,
 ) -> MagicMock:
-    """Return a MagicMock spec-bound to utec_py.devices.light.Light."""
-    from utec_py.devices.light import Light
+    """Return a MagicMock spec-bound to utec_client.devices.light.Light."""
+    from utec_client.devices.light import Light
 
     mock = MagicMock(spec=Light)
     mock.device_id = device_id
@@ -79,8 +79,8 @@ def make_fake_switch(
     is_on: bool = False,
     available: bool = True,
 ) -> MagicMock:
-    """Return a MagicMock spec-bound to utec_py.devices.switch.Switch."""
-    from utec_py.devices.switch import Switch
+    """Return a MagicMock spec-bound to utec_client.devices.switch.Switch."""
+    from utec_client.devices.switch import Switch
 
     mock = MagicMock(spec=Switch)
     mock.device_id = device_id
@@ -110,8 +110,8 @@ def make_fake_lock(
     battery_level: int = 90,
     lock_mode: str = "normal",
 ) -> MagicMock:
-    """Return a MagicMock spec-bound to utec_py.devices.lock.Lock."""
-    from utec_py.devices.lock import Lock
+    """Return a MagicMock spec-bound to utec_client.devices.lock.Lock."""
+    from utec_client.devices.lock import Lock
 
     mock = MagicMock(spec=Lock)
     mock.device_id = device_id

@@ -60,21 +60,21 @@ def test_candidate_manifest_changes_only_version() -> None:
         {
             "domain": "u_tec",
             "version": "0.4.0",
-            "requirements": ["utec_py_LF2b2w==0.4.0"],
+            "requirements": ["utec-client==0.5.0"],
         }
     )
     candidate = json.dumps(
         {
             "domain": "u_tec",
             "version": "0.5.0",
-            "requirements": ["utec_py_LF2b2w==0.4.0"],
+            "requirements": ["utec-client==0.5.0"],
         }
     )
 
     assert candidate_manifest_changes_only_version(baseline, candidate, "0.5.0")
     assert not candidate_manifest_changes_only_version(
         baseline,
-        candidate.replace("utec_py_LF2b2w==0.4.0", "utec_py_LF2b2w==0.5.0"),
+        candidate.replace("utec-client==0.5.0", "utec-client==0.6.0"),
         "0.5.0",
     )
 

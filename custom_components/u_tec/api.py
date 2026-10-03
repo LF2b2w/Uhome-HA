@@ -12,8 +12,8 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_entry_oauth2_flow, network
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.network import NoURLAvailableError
-from utec_py.api import AbstractAuth, UHomeApi
-from utec_py.exceptions import ApiError, UHomeError
+from utec_client.api import AbstractAuth, UHomeApi
+from utec_client.exceptions import ApiError, UHomeError
 
 from .const import DOMAIN, WEBHOOK_HANDLER, WEBHOOK_ID_PREFIX
 

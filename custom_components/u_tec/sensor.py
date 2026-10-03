@@ -14,8 +14,8 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from utec_py.devices.device_const import DeviceCapability
-from utec_py.devices.lock import Lock as UhomeLock
+from utec_client.devices.device_const import DeviceCapability
+from utec_client.devices.lock import Lock as UhomeLock
 
 from .const import DOMAIN, SIGNAL_DEVICE_UPDATE, SIGNAL_NEW_DEVICE
 from .coordinator import UhomeDataUpdateCoordinator

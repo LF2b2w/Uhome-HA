@@ -19,12 +19,12 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
-from utec_py.api import UHomeApi
-from utec_py.devices.device import BaseDevice
-from utec_py.devices.light import Light
-from utec_py.devices.lock import Lock
-from utec_py.devices.switch import Switch
-from utec_py.exceptions import ApiError, AuthenticationError
+from utec_client.api import UHomeApi
+from utec_client.devices.device import BaseDevice
+from utec_client.devices.light import Light
+from utec_client.devices.lock import Lock
+from utec_client.devices.switch import Switch
+from utec_client.exceptions import ApiError, AuthenticationError
 
 _LOGGER = logging.getLogger(__name__)
 

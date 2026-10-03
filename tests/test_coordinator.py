@@ -136,7 +136,7 @@ async def test_update_push_data_stamps_last_push_received(coordinator):
 
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
-from utec_py.exceptions import ApiError, AuthenticationError
+from utec_client.exceptions import ApiError, AuthenticationError
 
 
 async def test_async_update_data_empty_when_no_devices(coordinator):
@@ -187,9 +187,9 @@ async def test_async_update_data_api_error_raises_update_failed(
 
 # --- async_discover_devices: type routing ---
 
-from utec_py.devices.light import Light as UhomeLight
-from utec_py.devices.lock import Lock as UhomeLock
-from utec_py.devices.switch import Switch as UhomeSwitch
+from utec_client.devices.light import Light as UhomeLight
+from utec_client.devices.lock import Lock as UhomeLock
+from utec_client.devices.switch import Switch as UhomeSwitch
 
 
 def _discovery(handle_type: str, device_id: str = "d1") -> dict:

@@ -12,7 +12,7 @@ from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import aiohttp_client, config_entry_oauth2_flow
 import homeassistant.helpers.config_validation as cv
-from utec_py.api import UHomeApi
+from utec_client.api import UHomeApi
 
 from . import api
 from .const import (

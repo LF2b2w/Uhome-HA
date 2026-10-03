@@ -9,7 +9,7 @@ from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_capture_events
-from utec_py.exceptions import DeviceError
+from utec_client.exceptions import DeviceError
 
 from custom_components.u_tec.const import (
     CONF_OPTIMISTIC_LOCKS,
@@ -572,7 +572,7 @@ def test_is_optimistic_true_in_normal_mode(coord_with_lock):
 
 
 def test_is_optimistic_unaffected_by_unknown_lock_mode(coord_with_lock):
-    """utec_py returns None when lockMode is missing or unmapped; fail open."""
+    """utec_client returns None when lockMode is missing or unmapped; fail open."""
     coord, lock = coord_with_lock
     lock.lock_mode = None
     ent = UhomeLockEntity(coord, "lock-1")
