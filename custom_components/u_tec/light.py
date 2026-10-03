@@ -18,8 +18,8 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util.color import value_to_brightness
-from utec_py.devices.light import Light as UhomeLight
-from utec_py.exceptions import DeviceError
+from utec_client.devices.light import Light as UhomeLight
+from utec_client.exceptions import DeviceError
 
 from .const import (
     CONF_OPTIMISTIC_LIGHTS,

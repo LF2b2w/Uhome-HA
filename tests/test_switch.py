@@ -69,7 +69,7 @@ async def test_coordinator_update_clears_optimistic_on_confirm(coord_with_switch
 
 async def test_turn_on_wraps_device_error(coord_with_switch, hass):
     from homeassistant.exceptions import HomeAssistantError
-    from utec_py.exceptions import DeviceError
+    from utec_client.exceptions import DeviceError
 
     coord, sw = coord_with_switch
     sw.turn_on.side_effect = DeviceError("nope")
@@ -235,7 +235,7 @@ async def test_turn_off_no_optimistic_when_disabled(hass):
 async def test_turn_on_device_error_logs_and_raises(coord_with_switch, hass):
     """turn_on raises DeviceError → diagnostic logged + HomeAssistantError."""
     from homeassistant.exceptions import HomeAssistantError
-    from utec_py.exceptions import DeviceError
+    from utec_client.exceptions import DeviceError
 
     coord, sw = coord_with_switch
     sw.turn_on.side_effect = DeviceError("hw fault")
@@ -263,7 +263,7 @@ async def test_turn_on_device_error_logs_and_raises(coord_with_switch, hass):
 async def test_turn_off_device_error_logs_and_raises(coord_with_switch, hass):
     """turn_off raises DeviceError → diagnostic logged + HomeAssistantError."""
     from homeassistant.exceptions import HomeAssistantError
-    from utec_py.exceptions import DeviceError
+    from utec_client.exceptions import DeviceError
 
     coord, sw = coord_with_switch
     sw.turn_off.side_effect = DeviceError("hw fault")

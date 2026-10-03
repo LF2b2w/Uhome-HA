@@ -31,10 +31,10 @@ from homeassistant.helpers.selector import (
     SelectSelectorMode,
 )
 
-from utec_py.devices.device import BaseDevice
-from utec_py.devices.light import Light as UhomeLight
-from utec_py.devices.lock import Lock as UhomeLock
-from utec_py.devices.switch import Switch as UhomeSwitch
+from utec_client.devices.device import BaseDevice
+from utec_client.devices.light import Light as UhomeLight
+from utec_client.devices.lock import Lock as UhomeLock
+from utec_client.devices.switch import Switch as UhomeSwitch
 
 from .const import (
     CONF_HA_DEVICES,

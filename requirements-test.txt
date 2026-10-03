@@ -6,5 +6,5 @@ aioresponses>=0.7.6
 pytest-homeassistant-custom-component>=0.13.200
 
 # Integration runtime dep — must match manifest.json so the test suite
-# exercises the same utec_py source as the integration.
-utec_py_LF2b2w @ git+https://github.com/geofffranks/utec-py.git@main
+# exercises the same published utec-client version as the integration.
+utec-client==0.5.0

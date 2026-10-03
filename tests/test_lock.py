@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from homeassistant.exceptions import HomeAssistantError
-from utec_py.exceptions import DeviceError
+from utec_client.exceptions import DeviceError
 
 from custom_components.u_tec.const import CONF_OPTIMISTIC_LOCKS, DOMAIN, SIGNAL_DEVICE_UPDATE
 from custom_components.u_tec.lock import UhomeLockEntity, async_setup_entry

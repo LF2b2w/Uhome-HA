@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from utec_py.devices.lock import Lock as UhomeLock
+from utec_client.devices.lock import Lock as UhomeLock
 
 from .const import DOMAIN
 from .coordinator import UhomeDataUpdateCoordinator
