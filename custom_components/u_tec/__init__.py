@@ -9,7 +9,8 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_CLIENT_ID, CONF_CLIENT_SECRET, Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import aiohttp_client, config_entry_oauth2_flow
 import homeassistant.helpers.config_validation as cv
 from utec_client.api import UHomeApi
@@ -25,11 +26,14 @@ from .const import (
     DOMAIN,
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
+    SERVICE_START_DEBUG_POLLING,
+    SERVICE_STOP_DEBUG_POLLING,
     YAML_CONFIG_KEY,
 )
 from .coordinator import UhomeDataUpdateCoordinator
 
 _PLATFORMS: list[Platform] = [
+    Platform.BUTTON,
     Platform.LOCK,
     Platform.LIGHT,
     Platform.SWITCH,
@@ -55,10 +59,61 @@ CONFIG_SCHEMA = vol.Schema(
     extra=vol.ALLOW_EXTRA,
 )
 
+ATTR_CONFIG_ENTRY_ID = "config_entry_id"
+DEBUG_POLLING_SERVICE_SCHEMA = vol.Schema(
+    {vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string}
+)
+
+
+def _debug_polling_coordinators(
+    hass: HomeAssistant, call: ServiceCall
+) -> list[UhomeDataUpdateCoordinator]:
+    """Coordinators targeted by a debug polling service call.
+
+    With no config_entry_id, every loaded U-Tec entry is targeted.
+    """
+    domain_data = hass.data.get(DOMAIN, {})
+    entry_id = call.data.get(ATTR_CONFIG_ENTRY_ID)
+    if entry_id is not None:
+        entry_data = domain_data.get(entry_id)
+        if not isinstance(entry_data, dict) or "coordinator" not in entry_data:
+            raise ServiceValidationError(
+                f"U-Tec config entry {entry_id} is not loaded"
+            )
+        return [entry_data["coordinator"]]
+    coordinators = [
+        value["coordinator"]
+        for value in domain_data.values()
+        if isinstance(value, dict) and "coordinator" in value
+    ]
+    if not coordinators:
+        raise ServiceValidationError("No loaded U-Tec config entries")
+    return coordinators
+
+
+def _async_register_services(hass: HomeAssistant) -> None:
+    """Register the Debug Polling Mode services (no duration field on purpose)."""
+
+    async def _start(call: ServiceCall) -> None:
+        for coordinator in _debug_polling_coordinators(hass, call):
+            coordinator.debug.start()
+
+    async def _stop(call: ServiceCall) -> None:
+        for coordinator in _debug_polling_coordinators(hass, call):
+            coordinator.debug.stop()
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_START_DEBUG_POLLING, _start, schema=DEBUG_POLLING_SERVICE_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_STOP_DEBUG_POLLING, _stop, schema=DEBUG_POLLING_SERVICE_SCHEMA
+    )
+
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Read configuration.yaml settings and store for use by config entries."""
     hass.data.setdefault(DOMAIN, {})
+    _async_register_services(hass)
     if DOMAIN in config:
         hass.data[DOMAIN][YAML_CONFIG_KEY] = config[DOMAIN]
         if CONF_SCAN_INTERVAL in config[DOMAIN]:
@@ -93,6 +148,40 @@ def _resolve_scan_interval(hass: HomeAssistant, entry: ConfigEntry) -> int:
     return max(MIN_SCAN_INTERVAL, min(MAX_SCAN_INTERVAL, value))
 
 
+def _clamp_scan_interval_below_minimum(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Raise intervals saved under the old 1s floor up to MIN_SCAN_INTERVAL.
+
+    v0.6.1 briefly allowed 1-9s. A saved UI value is rewritten so the options
+    form and runtime agree; a YAML value cannot be rewritten, so it is clamped
+    at runtime by _resolve_scan_interval. Either way, log once at load.
+    """
+    if CONF_SCAN_INTERVAL in entry.options:
+        saved = int(entry.options[CONF_SCAN_INTERVAL])
+        if saved >= MIN_SCAN_INTERVAL:
+            return
+        hass.config_entries.async_update_entry(
+            entry, options={**entry.options, CONF_SCAN_INTERVAL: MIN_SCAN_INTERVAL}
+        )
+        source = "saved"
+    else:
+        yaml_config = hass.data.get(DOMAIN, {}).get(YAML_CONFIG_KEY, {})
+        if CONF_SCAN_INTERVAL not in yaml_config:
+            return
+        saved = int(yaml_config[CONF_SCAN_INTERVAL])
+        if saved >= MIN_SCAN_INTERVAL:
+            return
+        source = "configuration.yaml"
+    _LOGGER.warning(
+        "U-Tec %s poll interval of %ss is below the %ss minimum; using %ss. "
+        "For short fast-polling tests, use Debug Polling Mode "
+        "(button or u_tec.start_debug_polling)",
+        source,
+        saved,
+        MIN_SCAN_INTERVAL,
+        MIN_SCAN_INTERVAL,
+    )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Uhome from a config entry."""
     implementation = (
@@ -111,6 +200,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Explicit UI option > configuration.yaml > built-in default.
     yaml_config = hass.data.get(DOMAIN, {}).get(YAML_CONFIG_KEY, {})
+    _clamp_scan_interval_below_minimum(hass, entry)
     scan_interval = _resolve_scan_interval(hass, entry)
     discovery_interval = yaml_config.get(
         CONF_DISCOVERY_INTERVAL, DEFAULT_DISCOVERY_INTERVAL
@@ -175,6 +265,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(coordinator.async_stop_periodic_discovery)
     # Drop in-flight confirmation bursts so timers do not fire after unload
     entry.async_on_unload(coordinator.async_stop_adaptive_polls)
+    # End any debug polling session; nothing about it is persisted
+    entry.async_on_unload(coordinator.debug.shutdown)
 
     return True
 
@@ -195,7 +287,11 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     refreshes update entry.data and would otherwise trigger a reload on every
     refresh.
     """
-    entry_data = hass.data[DOMAIN][entry.entry_id]
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if entry_data is None:
+        # Not loaded (e.g. the setup-time interval clamp ran before
+        # hass.data was populated); setup reads the options itself.
+        return
     webhook_handler = entry_data["webhook_handler"]
     coordinator = entry_data["coordinator"]
     auth_data = entry_data["auth_data"]
@@ -220,6 +316,14 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
             MIN_SCAN_INTERVAL,
             min(MAX_SCAN_INTERVAL, int(entry.options[CONF_SCAN_INTERVAL])),
         )
+        if coordinator.debug.active:
+            # Applied when the debug session ends, so the session keeps its
+            # 1s interval and the new setting is not lost.
+            coordinator.debug.set_restore_interval(timedelta(seconds=new_interval))
+            _LOGGER.debug(
+                "Poll interval %ds will apply when debug polling ends", new_interval
+            )
+            return
         coordinator.update_interval = timedelta(seconds=new_interval)
         schedule = getattr(coordinator, "_schedule_refresh", None)
         if callable(schedule):

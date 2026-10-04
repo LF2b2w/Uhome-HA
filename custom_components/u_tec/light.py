@@ -32,6 +32,7 @@ from .const import (
     push_asserts_state,
 )
 from .coordinator import UhomeDataUpdateCoordinator
+from .debug_polling import debug_polling_active
 
 # use module-level logger
 _LOGGER = logging.getLogger(__name__)
@@ -132,6 +133,8 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
 
     def _is_optimistic(self) -> bool:
         """Return True if optimistic updates apply to this device."""
+        if debug_polling_active(self.coordinator):
+            return False
         return is_optimistic_enabled(
             self.coordinator.config_entry.options,
             CONF_OPTIMISTIC_LIGHTS,
@@ -179,7 +182,9 @@ class UhomeLightEntity(CoordinatorEntity, LightEntity):
         released so a command the device never fulfils cannot pin the entity.
         A single shared clock covers both tracks of a turn_on call.
         """
-        timed_out = (
+        # Debug polling shows raw polled state only: treat any outstanding
+        # optimism as expired so both tracks clear below.
+        timed_out = debug_polling_active(self.coordinator) or (
             self._optimistic_set_at is not None
             and dt_util.utcnow() - self._optimistic_set_at > OPTIMISTIC_TIMEOUT
         )

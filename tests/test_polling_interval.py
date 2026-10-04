@@ -33,7 +33,7 @@ async def _polling_form(hass, entry):
     )
 
 
-@pytest.mark.parametrize("interval", [1, 5, 10, 3600])
+@pytest.mark.parametrize("interval", [10, 15, 3600])
 async def test_polling_save_persists_and_reopens(hass, interval):
     options = {CONF_PUSH_ENABLED: False, "devices": ["lock-1"]}
     entry = make_config_entry(options=options)
@@ -42,7 +42,7 @@ async def test_polling_save_persists_and_reopens(hass, interval):
 
     form = await _polling_form(hass, entry)
     selector = next(iter(form["data_schema"].schema.values()))
-    assert selector.config["min"] == 1
+    assert selector.config["min"] == 10
     assert selector.config["max"] == 3600
     assert selector.config["step"] == 1
     assert form["data_schema"]({CONF_SCAN_INTERVAL: interval}) == {
@@ -63,9 +63,10 @@ async def test_polling_save_persists_and_reopens(hass, interval):
 
 @pytest.mark.parametrize("options,yaml,expected", [
     ({}, {}, 10),
-    ({}, {CONF_SCAN_INTERVAL: 1}, 1),
-    ({CONF_SCAN_INTERVAL: 1}, {CONF_SCAN_INTERVAL: 30}, 1),
-    ({}, {CONF_SCAN_INTERVAL: 0}, 1),
+    ({}, {CONF_SCAN_INTERVAL: 1}, 10),
+    ({CONF_SCAN_INTERVAL: 1}, {CONF_SCAN_INTERVAL: 30}, 10),
+    ({}, {CONF_SCAN_INTERVAL: 0}, 10),
+    ({CONF_SCAN_INTERVAL: 15}, {}, 15),
     ({CONF_SCAN_INTERVAL: 99999}, {}, 3600),
 ])
 async def test_polling_prefill_and_startup_resolution(hass, options, yaml, expected):
@@ -78,7 +79,7 @@ async def test_polling_prefill_and_startup_resolution(hass, options, yaml, expec
     assert _resolve_scan_interval(hass, entry) == expected
 
 
-@pytest.mark.parametrize("interval", [-1, 0, 3601])
+@pytest.mark.parametrize("interval", [-1, 0, 1, 9, 3601])
 async def test_polling_rejects_out_of_range_in_selector_and_backend(hass, interval):
     entry = make_config_entry()
     entry.add_to_hass(hass)
@@ -91,7 +92,9 @@ async def test_polling_rejects_out_of_range_in_selector_and_backend(hass, interv
     assert CONF_SCAN_INTERVAL not in entry.options
 
 
-@pytest.mark.parametrize("interval,expected", [(1, 1), (5, 5), (10, 10), (0, 1), (3601, 3600)])
+@pytest.mark.parametrize(
+    "interval,expected", [(1, 10), (5, 10), (10, 10), (15, 15), (0, 10), (3601, 3600)],
+)
 async def test_options_reschedules_and_reload_preserves_interval(
     hass, patched_uhomeapi, interval, expected,
 ):
@@ -122,7 +125,8 @@ async def test_options_reschedules_and_reload_preserves_interval(
         assert reloaded._discovery_interval == timedelta(seconds=DEFAULT_DISCOVERY_INTERVAL)
 
 
-async def test_one_second_startup_preserves_yaml_discovery(hass, patched_uhomeapi):
+async def test_legacy_one_second_option_clamped_on_startup(hass, patched_uhomeapi, caplog):  # noqa: F811
+    """A 1s value saved under v0.6.1 is raised to the floor, saved, and logged."""
     entry = make_config_entry(options={CONF_PUSH_ENABLED: False, CONF_SCAN_INTERVAL: 1})
     entry.add_to_hass(hass)
     hass.data.setdefault(DOMAIN, {})[YAML_CONFIG_KEY] = {
@@ -131,5 +135,35 @@ async def test_one_second_startup_preserves_yaml_discovery(hass, patched_uhomeap
     with _patched_setup_env(hass):
         assert await async_setup_entry(hass, entry)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    assert coordinator.update_interval == timedelta(seconds=1)
+    assert coordinator.update_interval == timedelta(seconds=10)
     assert coordinator._discovery_interval == timedelta(seconds=600)
+    assert entry.options[CONF_SCAN_INTERVAL] == 10
+    assert entry.options[CONF_PUSH_ENABLED] is False
+    records = [r for r in caplog.records if "below the 10s minimum" in r.getMessage()]
+    assert len(records) == 1
+    assert records[0].levelname == "WARNING"
+
+
+async def test_legacy_yaml_interval_clamped_and_logged(hass, patched_uhomeapi, caplog):  # noqa: F811
+    """YAML cannot be rewritten, so it is clamped at runtime with a notice."""
+    entry = make_config_entry(options={CONF_PUSH_ENABLED: False})
+    entry.add_to_hass(hass)
+    hass.data.setdefault(DOMAIN, {})[YAML_CONFIG_KEY] = {CONF_SCAN_INTERVAL: 2}
+    with _patched_setup_env(hass):
+        assert await async_setup_entry(hass, entry)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    assert coordinator.update_interval == timedelta(seconds=10)
+    assert CONF_SCAN_INTERVAL not in entry.options
+    assert any(
+        "configuration.yaml poll interval of 2s" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_interval_at_floor_is_not_rewritten_or_logged(hass, patched_uhomeapi, caplog):  # noqa: F811
+    entry = make_config_entry(options={CONF_PUSH_ENABLED: False, CONF_SCAN_INTERVAL: 10})
+    entry.add_to_hass(hass)
+    with _patched_setup_env(hass):
+        assert await async_setup_entry(hass, entry)
+    assert entry.options[CONF_SCAN_INTERVAL] == 10
+    assert not any("minimum" in r.getMessage() for r in caplog.records)

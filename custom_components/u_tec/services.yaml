@@ -1,0 +1,15 @@
+start_debug_polling:
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: u_tec
+
+stop_debug_polling:
+  fields:
+    config_entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: u_tec

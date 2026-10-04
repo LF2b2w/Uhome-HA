@@ -63,7 +63,8 @@ async def test_async_setup_entry_only_adds_locks_with_door_sensor(hass):
 
     await async_setup_entry(hass, entry, _add)
 
-    assert len(added) == 1
+    doors = [e for e in added if e.unique_id.startswith(f"{DOMAIN}_door_")]
+    assert len(doors) == 1
 
 
 async def test_async_setup_entry_adds_door_sensor_for_new_lock(hass):
@@ -86,7 +87,11 @@ async def test_async_setup_entry_adds_door_sensor_for_new_lock(hass):
     async_dispatcher_send(hass, SIGNAL_NEW_DEVICE)
     await hass.async_block_till_done()
 
-    assert [entity.unique_id for entity in added] == [
+    assert [
+        entity.unique_id
+        for entity in added
+        if entity.unique_id.startswith(f"{DOMAIN}_door_")
+    ] == [
         f"{DOMAIN}_door_lock-1",
         f"{DOMAIN}_door_lock-2",
     ]

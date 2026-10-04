@@ -11,6 +11,7 @@ from custom_components.u_tec.const import (
     SIGNAL_DEVICE_UPDATE,
     SIGNAL_NEW_DEVICE,
 )
+from custom_components.u_tec.debug_polling import REASON_FAILURES, DebugPolling
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -83,6 +84,9 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         self.blacklisted_devices = []
         self.last_push_received: datetime | None = None
         self.adaptive = AdaptivePoller(self)
+        # In-memory only; never persisted, so restarts and reloads come back
+        # at the configured interval.
+        self.debug = DebugPolling(self)
         self._discovery_interval = timedelta(seconds=discovery_interval)
         self._cancel_discovery: callable | None = None
         # Consecutive failed polls. Entities stay available through a single
@@ -95,6 +99,11 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
             scan_interval,
             discovery_interval,
         )
+
+    @property
+    def debug_polling_active(self) -> bool:
+        """Return True while a Debug Polling Mode session is running."""
+        return self.debug.active
 
     @property
     def poll_healthy_enough(self) -> bool:
@@ -132,6 +141,11 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
 
     def start_adaptive_poll(self, device_id: str, expected_locked: bool) -> None:
         """Start a confirmation burst for one lock."""
+        if self.debug.active:
+            _LOGGER.debug(
+                "Adaptive aggressive skipped for %s: debug polling active", device_id
+            )
+            return
         self.adaptive.start(device_id, expected_locked)
 
     def _defer_contradicting_report(self, device_id: str, state_data) -> bool:
@@ -140,6 +154,8 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         Returns True when the caller must not apply this payload. The re-armed
         burst fetches fresh evidence and that result wins.
         """
+        if self.debug.active:
+            return False
         if not self.adaptive.contradicts_confirmation(device_id, state_data):
             return False
         self.adaptive.rearm_for_confirmation(device_id)
@@ -220,6 +236,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict[str, dict]:
         """Fetch state for all known devices in a single bulk API call."""
+        self.debug.check_expired()
         if not self.devices:
             self.consecutive_update_failures = 0
             return {}
@@ -227,6 +244,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Polling state for %d Uhome devices (bulk)", len(self.devices))
         try:
             device_ids = list(self.devices.keys())
+            self.debug.count_request()
             response = await self.api.get_device_state(device_ids, None)
 
             # U-Tec returns HTTP 200 with an error envelope (e.g. INVALID_TOKEN) that
@@ -270,6 +288,11 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception:
             self.consecutive_update_failures += 1
             raise
+        finally:
+            # Debug polling never keeps hammering a failing API: once the
+            # unavailable threshold trips, go back to the configured interval.
+            if self.debug.active and not self.poll_healthy_enough:
+                self.debug.stop(REASON_FAILURES)
 
     async def update_push_data(self, push_data):
         """Process push update from webhook."""
@@ -277,6 +300,13 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         # genuine push was delivered. Stamp before payload guards so even an empty
         # keepalive counts as "push channel alive".
         self.last_push_received = dt_util.utcnow()
+
+        if self.debug.active:
+            # Debug polling shows raw polled state. The push still counts as
+            # "channel alive" above, but is not applied and does not reset the
+            # failure counter, so a failing poll path cannot be masked.
+            _LOGGER.debug("Push ignored while debug polling is active: %s", push_data)
+            return
 
         _LOGGER.debug("Processing push update: %s", push_data)
 

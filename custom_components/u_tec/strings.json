@@ -90,7 +90,7 @@
       },
       "polling_interval": {
         "title": "Polling Interval",
-        "description": "How often Home Assistant should poll the U-Tec API for device state (1–3600 seconds). A 1-second interval makes ten times as many scheduled polls as the 10-second default; cloud throttling and propagation delays may limit the benefit. 20 seconds is the recommended lock interval when Adaptive Aggressive is on: slow enough to be kind to the API, and still long enough for the full 1/2/3/5/8 confirmation sequence. With reliable push you can raise this further (300\u2013600 seconds). The default of 10 seconds suits installs that rely mainly on polling.",
+        "description": "How often Home Assistant should poll the U-Tec API for device state (10\u20133600 seconds). Everyone using this integration shares the same U-Tec API, which publishes no rate limits, so please use the longest interval that works for you. 20 seconds is the recommended lock interval when Adaptive Aggressive is on: slow enough to be kind to the API, and still long enough for the full 1/2/3/5/8 confirmation sequence. With reliable push you can raise this further (300\u2013600 seconds). The default of 10 seconds suits installs that rely mainly on polling. For short 1-second tests, use the Start debug polling button instead.",
         "data": {
           "scan_interval": "Poll interval"
         }
@@ -124,6 +124,54 @@
         "all": "All locks (recommended)",
         "none": "Off",
         "custom": "Custom per lock"
+      }
+    }
+  },
+  "entity": {
+    "button": {
+      "start_debug_polling": {
+        "name": "Start debug polling"
+      },
+      "stop_debug_polling": {
+        "name": "Stop debug polling"
+      }
+    },
+    "binary_sensor": {
+      "debug_polling": {
+        "name": "Debug polling",
+        "state_attributes": {
+          "ends_at": {
+            "name": "Ends at"
+          },
+          "requests": {
+            "name": "Requests"
+          },
+          "last_stop_reason": {
+            "name": "Last stop reason"
+          }
+        }
+      }
+    }
+  },
+  "services": {
+    "start_debug_polling": {
+      "name": "Start debug polling",
+      "description": "Poll the U-Tec API every second for 2 minutes, then return to the configured interval. Adaptive Aggressive, push state and optimistic updates are paused so you see raw polled state. Calling it again while a session is running does not extend it.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry",
+          "description": "U-Tec config entry to debug. Leave empty for all loaded entries."
+        }
+      }
+    },
+    "stop_debug_polling": {
+      "name": "Stop debug polling",
+      "description": "End a debug polling session early and return to the configured interval.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry",
+          "description": "U-Tec config entry to stop. Leave empty for all loaded entries."
+        }
       }
     }
   }

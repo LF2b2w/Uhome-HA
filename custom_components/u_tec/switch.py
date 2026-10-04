@@ -25,6 +25,7 @@ from .const import (
     push_asserts_state,
 )
 from .coordinator import UhomeDataUpdateCoordinator
+from .debug_polling import debug_polling_active
 
 # define our own logger so we don't import the private internal logger, and instead use a module logger
 _LOGGER = logging.getLogger(__name__)
@@ -76,6 +77,8 @@ class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
 
     def _is_optimistic(self) -> bool:
         """Return True if optimistic updates apply to this device."""
+        if debug_polling_active(self.coordinator):
+            return False
         return is_optimistic_enabled(
             self.coordinator.config_entry.options,
             CONF_OPTIMISTIC_SWITCHES,
@@ -110,7 +113,11 @@ class UhomeSwitchEntity(CoordinatorEntity, SwitchEntity):
         would pin the entity indefinitely. See lock.py for the reproduced case.
         """
         if self._optimistic_is_on is not None:
-            if self._optimistic_is_on == self._device.is_on:
+            if debug_polling_active(self.coordinator):
+                # Debug polling shows raw polled state only.
+                self._optimistic_is_on = None
+                self._optimistic_set_at = None
+            elif self._optimistic_is_on == self._device.is_on:
                 self._optimistic_is_on = None
                 self._optimistic_set_at = None
             elif self._optimistic_set_at is None:

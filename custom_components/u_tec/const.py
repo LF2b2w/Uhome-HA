@@ -36,8 +36,18 @@ CONF_DISCOVERY_INTERVAL = "discovery_interval"
 
 DEFAULT_SCAN_INTERVAL = 10  # seconds
 DEFAULT_DISCOVERY_INTERVAL = 300  # seconds (5 minutes)
-MIN_SCAN_INTERVAL = 1
+# Normal-operation floor. Every install shares one vendor API that publishes
+# no rate limits, so sub-10s polling is only available through Debug Polling
+# Mode below, which is time-boxed and never saved.
+MIN_SCAN_INTERVAL = 10
 MAX_SCAN_INTERVAL = 3600
+
+# Debug Polling Mode. A button or service polls at DEBUG_POLL_INTERVAL for at
+# most DEBUG_POLL_DURATION, then the configured interval comes back. These are
+# deliberately not options: the session is never saved, and pressing again
+# while a session is active does not extend it.
+DEBUG_POLL_INTERVAL = 1  # seconds
+DEBUG_POLL_DURATION = 120  # seconds
 
 # Adaptive Aggressive lock confirmation. After a lock/unlock command, poll
 # that one device on a Fibonacci delay (1, 2, 3, 5, 8s) until the API
@@ -50,6 +60,8 @@ CONFIRMATION_WINDOW_CAP = 60
 
 # Key used inside hass.data[DOMAIN] for yaml-sourced config (separate from entry IDs).
 YAML_CONFIG_KEY = "_yaml_config"
+SERVICE_START_DEBUG_POLLING = "start_debug_polling"
+SERVICE_STOP_DEBUG_POLLING = "stop_debug_polling"
 
 OAUTH2_AUTHORIZE = "https://oauth.u-tec.com/authorize"
 OAUTH2_TOKEN = "https://oauth.u-tec.com/token"

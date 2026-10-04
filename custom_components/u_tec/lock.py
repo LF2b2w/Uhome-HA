@@ -27,6 +27,7 @@ from .const import (
     push_asserts_state,
 )
 from .coordinator import UhomeDataUpdateCoordinator
+from .debug_polling import debug_polling_active
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -131,6 +132,8 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         """
         if self._device.lock_mode == PASSAGE_MODE:
             return False
+        if debug_polling_active(self.coordinator):
+            return False
         return is_optimistic_enabled(
             self.coordinator.config_entry.options,
             CONF_OPTIMISTIC_LOCKS,
@@ -185,7 +188,11 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         So optimism is held for OPTIMISTIC_TIMEOUT and then released.
         """
         if self._optimistic_is_locked is not None:
-            if self._device.lock_mode == PASSAGE_MODE:
+            if debug_polling_active(self.coordinator):
+                # Debug polling shows raw polled state only.
+                self._optimistic_is_locked = None
+                self._optimistic_set_at = None
+            elif self._device.lock_mode == PASSAGE_MODE:
                 # The lock entered Passage mode while optimism was outstanding.
                 # It will never confirm, and _is_optimistic() now reports False,
                 # so holding on would make is_locked return an assumed value

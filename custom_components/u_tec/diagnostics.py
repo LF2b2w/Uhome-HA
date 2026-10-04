@@ -107,6 +107,7 @@ async def async_get_config_entry_diagnostics(
             "consecutive_update_failures": coordinator.consecutive_update_failures,
             "poll_healthy_enough": coordinator.poll_healthy_enough,
             "device_count": len(coordinator.devices),
+            "debug_polling": coordinator.debug.as_dict(),
         },
         "devices": async_redact_data(device_data, REDACT_KEYS),
         "discovery_data": async_redact_data(discovery_data, REDACT_KEYS),

@@ -45,6 +45,21 @@ Debug progress is under `custom_components.u_tec`.
 
 Configure → Adaptive Aggressive, after the integration is set up.
 
+## Polling interval and Debug Polling Mode
+
+Every install of this integration talks to the same U-Tec cloud API, and U-Tec publishes no rate limits for it. The polling interval is therefore 10 to 3600 seconds, with 10 as the default. One poll is one bulk request per install, so 10 seconds is about 8,600 requests a day, and 1 second would be about 86,400. Please use the longest interval that works for you. For quick lock feedback, Adaptive Aggressive polls briefly after a command instead of all day.
+
+An interval below 10 seconds saved under 0.6.1 is raised to 10 when the integration loads, with a warning in the log. A `scan_interval` below 10 in `configuration.yaml` is treated as 10.
+
+For testing, Debug Polling Mode gives you 1-second polling for a short window:
+
+- Start it with the **Start debug polling** button on the U-Tec Integration device, or the `u_tec.start_debug_polling` action. Stop it early with **Stop debug polling** or `u_tec.stop_debug_polling`.
+- It polls every second for 2 minutes, about 120 requests, then goes back to your configured interval on its own. Pressing start again while it runs does not extend it.
+- While it runs, Adaptive Aggressive, push state, and optimistic updates are paused, so what you see is raw polled state. Pushes still update the Last Push sensor.
+- It ends early if polls fail enough to mark entities unavailable.
+- It is never saved. A restart or reload always comes back at your configured interval.
+- Start, stop, the reason, and the request count are logged at WARNING. The **Debug polling** diagnostic binary sensor shows whether a session is running, when it ends, and how many requests it made.
+
 ## Install
 
 ### HACS
