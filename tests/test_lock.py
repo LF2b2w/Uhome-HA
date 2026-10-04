@@ -143,22 +143,24 @@ async def test_setup_entry_excludes_non_lock_devices(hass):
 
 
 # ---------------------------------------------------------------------------
-# available: device offline OR consecutive poll failures threshold
+# Always available (HA drops calls to unavailable entities); state unknown instead
 # ---------------------------------------------------------------------------
 
-def test_available_false_when_consecutive_polls_failed(coord_with_lock):
-    coord, lock = coord_with_lock
+def test_unknown_not_unavailable_when_consecutive_polls_failed(coord_with_lock):
+    coord, _lock = coord_with_lock
     coord.poll_healthy_enough = False
     coord.last_update_success = False
     ent = UhomeLockEntity(coord, "lock-1")
-    assert ent.available is False
+    assert ent.available is True
+    assert ent.is_locked is None
 
 
-def test_available_false_when_device_unavailable(coord_with_lock):
+def test_unknown_not_unavailable_when_device_unavailable(coord_with_lock):
     coord, lock = coord_with_lock
     lock.available = False
     ent = UhomeLockEntity(coord, "lock-1")
-    assert ent.available is False
+    assert ent.available is True
+    assert ent.is_locked is None
 
 
 # ---------------------------------------------------------------------------

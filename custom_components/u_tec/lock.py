@@ -41,6 +41,14 @@ _LOGGER = logging.getLogger(__name__)
 # the light/switch fixes mirror this logic but are unverified on live
 # hardware. https://github.com/LF2b2w/Uhome-HA/issues/58
 
+# SECURITY COMMANDS ARE NEVER RECOMMENDATIONS. Lock and unlock (and any
+# future Passage or mode command) are always sent, or verified first against
+# the authoritative source (a fresh query of that lock). They are never
+# skipped because of cached or perceived state: not "already locked", not a
+# stale lock mode, not debug polling, optimistic state, Adaptive Aggressive,
+# or failing polls. That is also why the entity stays available: Home
+# Assistant silently drops service calls to unavailable entities.
+
 # utec_client maps LockMode.PASSAGE -> "Passage" (devices/lock.py::lock_mode).
 # In this mode the device ignores lock/unlock commands outright.
 PASSAGE_MODE = "Passage"
@@ -202,24 +210,36 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
 
     @property
     def available(self) -> bool:
-        """Return True if entity is available.
+        """Always True, so lock and unlock are never dropped.
 
-        Unavailable only when the device itself is offline, or the coordinator
-        has failed two consecutive API polls (a single transient failure is
-        tolerated).
+        Home Assistant skips service calls to unavailable entities without
+        telling anyone. Basing that on cached health (two failed polls, or
+        the last status saying offline) would silently drop a security
+        command. Instead the state reads unknown while the status cannot be
+        trusted, and a command still goes to the API, which reports a real
+        failure if the lock cannot be reached.
         """
-        return self.coordinator.poll_healthy_enough and self._device.available
+        return True
+
+    @property
+    def _status_trusted(self) -> bool:
+        """Polls are healthy and the last status said the lock is online."""
+        return bool(self.coordinator.poll_healthy_enough and self._device.available)
 
     @property
     def is_locked(self) -> bool:
-        """Return true if the lock is locked."""
+        """Return true if the lock is locked; None (unknown) if status is stale."""
         if self._optimistic_is_locked is not None:
             return self._optimistic_is_locked
+        if not self._status_trusted:
+            return None
         return self._device.is_locked
 
     @property
     def is_jammed(self) -> bool:
-        """Return true if the lock is jammed."""
+        """Return true if the lock is jammed; None (unknown) if status is stale."""
+        if not self._status_trusted:
+            return None
         return self._device.is_jammed
 
     @property
@@ -276,12 +296,26 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
             "lock_mode": self._device.lock_mode,
             "battery_level": self._device.battery_level,
             "battery_status": self._device.battery_status,
+            # False while polls are failing or the lock last reported
+            # offline. The state then reads unknown, but commands still go.
+            "status_current": self._status_trusted,
         }
         if self._device.has_door_sensor:
             attributes["door_state"] = self._device.door_state
             attributes["is_door_open"] = self._device.is_door_open
         return attributes
 
+    def _log_if_status_stale(self, command: str, name: str) -> None:
+        if not self._status_trusted:
+            _LOGGER.info(
+                "%s: sending %s command although the last status is not current"
+                " (polls failing or lock reported offline)",
+                name,
+                command,
+            )
+
+    # Command handlers. Security commands are never recommendations: send,
+    # or verify with a fresh query first. Never skip on cached state.
     async def async_lock(self, **kwargs: Any) -> None:
         """Lock the device.
 
@@ -294,6 +328,7 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         command is sent as usual. When in doubt, send the command.
         """
         name = self._device.name or self._device.device_id
+        self._log_if_status_stale("lock", name)
         self._passage_unverified = False
         if self._device.lock_mode == PASSAGE_MODE:
             self._passage_check_error = None
@@ -338,13 +373,14 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
             raise HomeAssistantError(f"Failed to lock: {err}") from err
 
     async def async_unlock(self, **kwargs: Any) -> None:
-        """Unlock the device.
+        """Unlock the device. Always sent, even if the cache says unlocked.
 
         Deliberately has no Passage-mode resync counterpart to async_lock: a
         lock in Passage mode already reports itself unlocked, so an unlock
         command leaves consumers' target and current states in agreement and
         nothing can hang. Only the lock direction can diverge.
         """
+        self._log_if_status_stale("unlock", self._device.name or self._device.device_id)
         _LOGGER.debug("Unlocking device %s", self._device.device_id)
         try:
             await self._device.unlock()

@@ -69,6 +69,8 @@ The **U-Tec Integration** device has diagnostic sensors showing what your instal
 
 The U-tec API does not currently expose Wi-Fi bridge modules or Air Portal devices.
 
+**Lock and unlock are security commands, not recommendations.** The integration always sends them, or checks the lock's current state with U-tec first. It never skips one because of cached state: not "already locked", not debug polling, not failing polls. That's why a lock whose status is stale shows **unknown** instead of unavailable (Home Assistant silently ignores commands to unavailable entities), and the command still goes out.
+
 ## Adaptive Aggressive
 
 U-tec can register a webhook or a Nabu Casa cloudhook. Those pushes often never arrive, so Home Assistant otherwise learns a lock or unlock only on the next idle poll.
@@ -185,7 +187,7 @@ Configure → Polling Interval. The minimum is 10 seconds. A value below 10 save
 ## Troubleshooting
 
 - **Lock state is slow to update.** Push is often unreliable. Turn on Adaptive Aggressive rather than lowering the interval. Check **Pushes received**: if it never moves, push isn't reaching you.
-- **Entities flap to unavailable.** Two failed polls in a row mark entities unavailable until the next good poll or push. **API failures** shows how often that's happening. Intermittent U-tec 500 errors do happen.
+- **Entities flap to unavailable.** Two failed polls in a row mark lights and switches unavailable until the next good poll or push. Locks show unknown instead, with `status_current: false`, so lock and unlock commands still go through. **API failures** shows how often that's happening. Intermittent U-tec 500 errors do happen.
 - **A warning about the poll interval at startup.** Your saved interval was below the 10-second minimum and was raised to 10. Nothing else to do.
 - **Debug logs.** Settings → Devices & services → U-Tec → Enable debug logging, reproduce the problem, then disable it to download the log. Logger: `custom_components.u_tec`.
 - **Diagnostics.** The integration's ⋮ menu → Download diagnostics includes device state, coordinator health, debug polling, and API usage. Credentials are redacted.

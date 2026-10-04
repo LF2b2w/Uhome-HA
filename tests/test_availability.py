@@ -43,7 +43,8 @@ def test_available_through_single_poll_failure():
     assert ent.available is True
 
 
-def test_unavailable_after_two_consecutive_poll_failures():
+def test_lock_stays_available_but_unknown_after_two_poll_failures():
+    """Locks stay available so HA never drops a lock or unlock call."""
     coord, lock = _coord_with_lock()
     coord.consecutive_update_failures = 2
     coord.poll_healthy_enough = (
@@ -51,14 +52,17 @@ def test_unavailable_after_two_consecutive_poll_failures():
     )
     coord.last_update_success = False
     ent = UhomeLockEntity(coord, "lock-1")
-    assert ent.available is False
+    assert ent.available is True
+    assert ent.is_locked is None
+    assert ent.extra_state_attributes["status_current"] is False
 
 
-def test_unavailable_when_device_offline():
+def test_lock_stays_available_but_unknown_when_device_offline():
     coord, lock = _coord_with_lock()
     lock.available = False
     ent = UhomeLockEntity(coord, "lock-1")
-    assert ent.available is False
+    assert ent.available is True
+    assert ent.is_locked is None
 
 
 def test_poll_healthy_enough_property():
