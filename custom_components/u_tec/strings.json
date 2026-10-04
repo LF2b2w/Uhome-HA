@@ -3,7 +3,7 @@
     "step": {
       "replace_credentials": {
         "title": "U-Tec credentials",
-        "description": "Community-maintained. Not made, endorsed, or supported by U-tec or Xthings. Uses each user's own OpenAPI credentials. Enter your Client ID and Client Secret from the Xthings app (My Account \u2192 OpenAPI). Submitting will start the U-Tec authorization. The Client Secret is never displayed back \u2014 re-enter it here even if you are only rotating the secret.",
+        "description": "Community-maintained. Not made, endorsed, or supported by U-tec or Xthings. Uses each user's own OpenAPI credentials. Enter your Client ID and Client Secret from the Xthings app (My Account → OpenAPI). Submitting will start the U-Tec authorization. The Client Secret is never displayed back — re-enter it here even if you are only rotating the secret.",
         "data": {
           "client_id": "Client ID",
           "client_secret": "Client Secret"
@@ -195,6 +195,30 @@
       },
       "device_api_commands": {
         "name": "API commands sent"
+      },
+      "aa_bursts_started": {
+        "name": "Adaptive Aggressive bursts"
+      },
+      "aa_polls": {
+        "name": "Adaptive Aggressive polls"
+      },
+      "aa_changes_caught": {
+        "name": "Adaptive Aggressive changes caught"
+      },
+      "aa_avg_seconds_to_detect": {
+        "name": "Adaptive Aggressive average time to detect"
+      },
+      "aa_avg_polls_to_detect": {
+        "name": "Adaptive Aggressive average polls to detect"
+      },
+      "aa_ended_by_push": {
+        "name": "Adaptive Aggressive bursts ended by push"
+      },
+      "aa_ended_by_failures": {
+        "name": "Adaptive Aggressive bursts ended by failures"
+      },
+      "aa_exhausted": {
+        "name": "Adaptive Aggressive bursts that ran out"
       }
     }
   },

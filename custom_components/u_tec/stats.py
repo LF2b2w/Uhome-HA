@@ -194,3 +194,112 @@ class MeteredApi:
             return result
 
         return _metered
+
+
+# How an Adaptive Aggressive burst ended, grouped for the AA sensors.
+AA_END_CAUGHT = "confirmed"  # a burst poll saw the commanded state
+AA_END_POLL = "poll"  # a regular poll saw it first
+AA_END_PUSH = "push"  # a push carrying st.lock saw it first
+AA_FAILURE_REASONS = frozenset({"api errors", "poll failure threshold", "auth failed"})
+AA_EXHAUSTED_REASONS = frozenset({"max attempts", "idle cap"})
+
+
+class AdaptiveStats:
+    """Counters for Adaptive Aggressive confirmation bursts.
+
+    One burst ends exactly once, so the outcome counters add up to
+    bursts_started minus any burst still running. Averages cover only
+    bursts where a burst poll caught a real state change. In memory only.
+    """
+
+    def __init__(self) -> None:
+        self.counting_since: datetime = dt_util.utcnow()
+        self.bursts_started = 0
+        self.rearms = 0
+        self.polls = 0
+        self.poll_failures = 0
+        self.changes_caught = 0
+        self.confirmed_without_change = 0
+        self.ended_by_poll = 0
+        self.ended_by_push = 0
+        self.ended_by_failures = 0
+        self.exhausted = 0
+        self.cancelled = 0
+        self.last_caught: dict[str, Any] | None = None
+        self._caught_seconds_total = 0.0
+        self._caught_polls_total = 0
+
+    def record_start(self, *, rearm: bool) -> None:
+        self.bursts_started += 1
+        if rearm:
+            self.rearms += 1
+
+    def record_poll(self, *, ok: bool) -> None:
+        self.polls += 1
+        if not ok:
+            self.poll_failures += 1
+
+    def record_caught(
+        self, device_id: str, seconds: float, polls: int, state: str
+    ) -> None:
+        self.changes_caught += 1
+        self._caught_seconds_total += seconds
+        self._caught_polls_total += polls
+        self.last_caught = {
+            "device_id": device_id,
+            "state": state,
+            "seconds": round(seconds, 1),
+            "polls": polls,
+            "at": dt_util.utcnow().isoformat(),
+        }
+
+    def record_end(self, reason: str, *, changed: bool = True) -> None:
+        if reason == AA_END_CAUGHT:
+            if not changed:
+                self.confirmed_without_change += 1
+        elif reason == AA_END_POLL:
+            self.ended_by_poll += 1
+        elif reason == AA_END_PUSH:
+            self.ended_by_push += 1
+        elif reason in AA_FAILURE_REASONS:
+            self.ended_by_failures += 1
+        elif reason in AA_EXHAUSTED_REASONS:
+            self.exhausted += 1
+        else:
+            # restarted, debug polling, unload, device gone
+            self.cancelled += 1
+
+    @property
+    def avg_seconds_to_detect(self) -> float | None:
+        if not self.changes_caught:
+            return None
+        return round(self._caught_seconds_total / self.changes_caught, 1)
+
+    @property
+    def avg_polls_to_detect(self) -> float | None:
+        if not self.changes_caught:
+            return None
+        return round(self._caught_polls_total / self.changes_caught, 1)
+
+    def as_dict(self) -> dict[str, Any]:
+        """Diagnostics summary."""
+        return {
+            "counting_since": self.counting_since.isoformat(),
+            "bursts_started": self.bursts_started,
+            "rearms": self.rearms,
+            "polls": self.polls,
+            "poll_failures": self.poll_failures,
+            "changes_caught": self.changes_caught,
+            "avg_seconds_to_detect": self.avg_seconds_to_detect,
+            "avg_polls_to_detect": self.avg_polls_to_detect,
+            "ended": {
+                "caught_by_burst": self.changes_caught,
+                "confirmed_without_change": self.confirmed_without_change,
+                "regular_poll": self.ended_by_poll,
+                "push": self.ended_by_push,
+                "failures": self.ended_by_failures,
+                "schedule_exhausted": self.exhausted,
+                "cancelled": self.cancelled,
+            },
+            "last_caught": self.last_caught,
+        }

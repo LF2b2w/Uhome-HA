@@ -1,4 +1,4 @@
-"""Support for Uhome battery, push and API accounting sensors."""
+"""Support for Uhome battery, push, API and Adaptive Aggressive accounting sensors."""
 
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -28,6 +28,9 @@ from .stats import KIND_COMMAND, KIND_DISCOVERY, KIND_QUERY
 REQUESTS = "requests"
 REQUESTS_PER_HOUR = "requests/h"
 PUSHES = "pushes"
+BURSTS = "bursts"
+POLLS = "polls"
+CHANGES = "changes"
 
 
 async def async_setup_entry(
@@ -45,7 +48,7 @@ async def async_setup_entry(
     async_add_entities(entities)
     async_add_entities(
         UhomeApiStatSensor(coordinator, description)
-        for description in API_STAT_SENSORS
+        for description in (*API_STAT_SENSORS, *AA_STAT_SENSORS)
     )
     async_add_entities(_create_device_command_entities(coordinator))
 
@@ -151,8 +154,8 @@ class UhomeLastPushSensor(CoordinatorEntity, SensorEntity):
     """Diagnostic sensor: timestamp of the most recent webhook push received.
 
     Coordinator-level (not per-device): there is no physical device, so it ties
-    its device_info to the config entry. A stale value here while locks are still
-    changing state (caught by the 30s poll) is the signal that U-Tec push delivery
+    its device_info to the config entry. A stale value here while devices are still
+    changing state (caught by the regular poll) is the signal that U-Tec push delivery
     has died — surfaced by the ha-configs push-health-monitor automation.
     """
 
@@ -272,6 +275,73 @@ API_STAT_SENSORS: tuple[UhomeApiStatDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         entity_registry_enabled_default=False,
         value_fn=lambda c: c.stats.pushes_ignored,
+    ),
+)
+
+
+# Adaptive Aggressive accounting, from coordinator.adaptive.stats. Averages
+# cover only bursts where a burst poll caught the change; they are None
+# (unknown) until the first catch.
+AA_STAT_SENSORS: tuple[UhomeApiStatDescription, ...] = (
+    UhomeApiStatDescription(
+        key="aa_bursts_started",
+        translation_key="aa_bursts_started",
+        native_unit_of_measurement=BURSTS,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.adaptive.stats.bursts_started,
+    ),
+    UhomeApiStatDescription(
+        key="aa_polls",
+        translation_key="aa_polls",
+        native_unit_of_measurement=POLLS,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.adaptive.stats.polls,
+    ),
+    UhomeApiStatDescription(
+        key="aa_changes_caught",
+        translation_key="aa_changes_caught",
+        native_unit_of_measurement=CHANGES,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.adaptive.stats.changes_caught,
+    ),
+    UhomeApiStatDescription(
+        key="aa_avg_seconds_to_detect",
+        translation_key="aa_avg_seconds_to_detect",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value_fn=lambda c: c.adaptive.stats.avg_seconds_to_detect,
+    ),
+    UhomeApiStatDescription(
+        key="aa_avg_polls_to_detect",
+        translation_key="aa_avg_polls_to_detect",
+        native_unit_of_measurement=POLLS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        entity_registry_enabled_default=False,
+        value_fn=lambda c: c.adaptive.stats.avg_polls_to_detect,
+    ),
+    UhomeApiStatDescription(
+        key="aa_ended_by_push",
+        translation_key="aa_ended_by_push",
+        native_unit_of_measurement=BURSTS,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.adaptive.stats.ended_by_push,
+    ),
+    UhomeApiStatDescription(
+        key="aa_ended_by_failures",
+        translation_key="aa_ended_by_failures",
+        native_unit_of_measurement=BURSTS,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.adaptive.stats.ended_by_failures,
+    ),
+    UhomeApiStatDescription(
+        key="aa_exhausted",
+        translation_key="aa_exhausted",
+        native_unit_of_measurement=BURSTS,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.adaptive.stats.exhausted,
     ),
 )
 

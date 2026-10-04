@@ -195,6 +195,30 @@
       },
       "device_api_commands": {
         "name": "API commands sent"
+      },
+      "aa_bursts_started": {
+        "name": "Adaptive Aggressive bursts"
+      },
+      "aa_polls": {
+        "name": "Adaptive Aggressive polls"
+      },
+      "aa_changes_caught": {
+        "name": "Adaptive Aggressive changes caught"
+      },
+      "aa_avg_seconds_to_detect": {
+        "name": "Adaptive Aggressive average time to detect"
+      },
+      "aa_avg_polls_to_detect": {
+        "name": "Adaptive Aggressive average polls to detect"
+      },
+      "aa_ended_by_push": {
+        "name": "Adaptive Aggressive bursts ended by push"
+      },
+      "aa_ended_by_failures": {
+        "name": "Adaptive Aggressive bursts ended by failures"
+      },
+      "aa_exhausted": {
+        "name": "Adaptive Aggressive bursts that ran out"
       }
     }
   },

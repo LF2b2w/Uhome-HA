@@ -10,6 +10,11 @@ state. Stop when the schedule runs out, when the next delay would be >= the
 idle scan interval, or when polls keep failing (the coordinator's failure
 threshold is tripped, or this burst hits that many consecutive errors).
 
+When a burst poll is what catches the change (not a push or a regular
+poll), it is logged at WARNING with the device, the new state, the seconds
+since the command, and how many burst polls it took. AdaptiveStats keeps
+the counts behind the Adaptive Aggressive sensors.
+
 A confirmed burst records a confirmation. A later poll or push that
 contradicts that confirmation inside one idle interval (capped at 60s)
 is not applied. Instead the burst is re-armed and the fresh poll wins,
@@ -40,8 +45,7 @@ from .const import (
     SIGNAL_ADAPTIVE_POLL,
 )
 from .optimistic import is_adaptive_aggressive_enabled
-
-_LOGGER = logging.getLogger(__name__)
+from .stats import AA_END_CAUGHT, AA_END_POLL, AdaptiveStats
 
 LOCK_CAPABILITY = "st.lock"
 LOCK_ATTRIBUTE = "lockState"
@@ -66,13 +70,33 @@ def reported_locked(state_data: Any) -> bool | None:
     Lock.is_locked falls back to False when st.lock is missing, which is
     indistinguishable from a real unlock. Battery and door pushes must not
     confirm a burst.
+
+    Accepts both shapes: the flattened {"st.lock": {"lockState": ...}} from
+    Device.get_state_data(), and the raw API/push device dict with a
+    "states" list, which is what the regular poll and push paths pass.
     """
     if not isinstance(state_data, dict):
         return None
+    states = state_data.get("states")
+    if isinstance(states, list):
+        value = next(
+            (
+                item.get("value")
+                for item in states
+                if isinstance(item, dict)
+                and item.get("capability") == LOCK_CAPABILITY
+                and item.get("name") == LOCK_ATTRIBUTE
+            ),
+            None,
+        )
+        return _lock_value(value)
     cap = state_data.get(LOCK_CAPABILITY)
     if not isinstance(cap, dict) or LOCK_ATTRIBUTE not in cap:
         return None
-    value = cap[LOCK_ATTRIBUTE]
+    return _lock_value(cap[LOCK_ATTRIBUTE])
+
+
+def _lock_value(value: Any) -> bool | None:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -113,6 +137,7 @@ class AdaptivePoller:
         self._bursts: dict[str, dict[str, Any]] = {}
         self._confirmations: dict[str, dict[str, Any]] = {}
         self._ticks: dict[str, Any] = {}
+        self.stats = AdaptiveStats()
 
     def idle_interval_seconds(self) -> int:
         interval = self.coordinator.update_interval
@@ -143,6 +168,7 @@ class AdaptivePoller:
             unsub()
             current["unsub"] = None
         attempts = int(current.get("attempt", 0))
+        self.stats.record_end(reason, changed=bool(current.get("changed", True)))
         _LOGGER.debug(
             "Adaptive aggressive stopped for %s after %s attempt(s): %s",
             device_id,
@@ -196,13 +222,21 @@ class AdaptivePoller:
         if device_id in self._bursts:
             self.cancel(device_id, "restarted")
 
+        device = self.coordinator.devices.get(device_id)
+        before = reported_locked(device.get_state_data()) if device else None
         self._bursts[device_id] = {
             "expected_locked": expected_locked,
             "attempt": 0,
             "delay": initial,
             "failures": 0,
             "unsub": None,
+            # For the "caught" warning and stats: when the command (or the
+            # re-check) started, and what the API last said before it.
+            "started_at": dt_util.utcnow(),
+            "rearm": not clear_confirmation,
+            "before": before,
         }
+        self.stats.record_start(rearm=not clear_confirmation)
         _LOGGER.debug(
             "Adaptive aggressive started for %s: expected_locked=%s idle=%ss",
             device_id,
@@ -253,7 +287,7 @@ class AdaptivePoller:
         self,
         device_id: str,
         device,
-        reason: str = "confirmed",
+        reason: str = AA_END_POLL,
         state_data: Any = None,
     ) -> None:
         burst = self._bursts.get(device_id)
@@ -314,6 +348,32 @@ class AdaptivePoller:
                 },
             )
 
+    def _report_caught(
+        self, device_id: str, device, burst: dict[str, Any], locked: bool
+    ) -> None:
+        """A burst poll, not a push or regular poll, saw the change."""
+        polls = int(burst["attempt"])
+        started = burst.get("started_at")
+        seconds = (
+            (dt_util.utcnow() - started).total_seconds() if started else 0.0
+        )
+        state = "locked" if locked else "unlocked"
+        name = getattr(device, "name", None)
+        name = name if isinstance(name, str) and name else device_id
+        _LOGGER.warning(
+            "Adaptive Aggressive caught %s (%s) changing to %s %.1fs after the %s,"
+            " on burst poll %s of %s (intervals: %s)",
+            name,
+            device_id,
+            state,
+            seconds,
+            "re-check started" if burst.get("rearm") else "command",
+            polls,
+            ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS,
+            "+".join(str(d) for d in confirmation_delays(polls)) + "s",
+        )
+        self.stats.record_caught(device_id, seconds, polls, state)
+
     async def async_tick(self, device_id: str) -> None:
         """Run one poll after the Adaptive Aggressive timer ends."""
         burst = self._bursts.get(device_id)
@@ -368,11 +428,14 @@ class AdaptivePoller:
             )
             confirmed = actual is not None and actual == expected
             burst["failures"] = 0
+            self.stats.record_poll(ok=True)
         except ConfigEntryAuthFailed:
+            self.stats.record_poll(ok=False)
             if self._bursts.get(device_id) is burst:
                 self.cancel(device_id, "auth failed", burst=burst, notify=True)
             return
         except Exception as err:  # noqa: BLE001
+            self.stats.record_poll(ok=False)
             _LOGGER.warning(
                 "Adaptive aggressive poll failed for %s: %s",
                 device_id,
@@ -396,7 +459,10 @@ class AdaptivePoller:
                 "locked": expected,
                 "at": dt_util.utcnow(),
             }
-            self.cancel(device_id, "confirmed", burst=burst)
+            burst["changed"] = burst.get("before") != expected
+            if burst["changed"]:
+                self._report_caught(device_id, device, burst, expected)
+            self.cancel(device_id, AA_END_CAUGHT, burst=burst)
             return
 
         if burst["attempt"] >= ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS:

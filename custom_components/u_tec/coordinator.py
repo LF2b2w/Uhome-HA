@@ -268,6 +268,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                         self.adaptive.cancel_if_confirmed(
                             device_id,
                             device,
+                            reason="poll",
                             state_data=device_data,
                         )
 

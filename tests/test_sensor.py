@@ -51,15 +51,17 @@ async def test_async_setup_entry_adds_one_per_lock(hass, coord_with_locks):
     battery_sensors = [e for e in added if isinstance(e, UhomeBatterySensorEntity)]
     assert len(battery_sensors) == 2
     from custom_components.u_tec.sensor import (
+        AA_STAT_SENSORS,
         API_STAT_SENSORS,
         UhomeApiStatSensor,
         UhomeDeviceCommandsSensor,
     )
 
     # 2 battery + 1 last-push + account-level API stats + 1 commands per device
-    assert len([e for e in added if isinstance(e, UhomeApiStatSensor)]) == len(API_STAT_SENSORS)
+    stat_count = len(API_STAT_SENSORS) + len(AA_STAT_SENSORS)
+    assert len([e for e in added if isinstance(e, UhomeApiStatSensor)]) == stat_count
     assert len([e for e in added if isinstance(e, UhomeDeviceCommandsSensor)]) == 2
-    assert len(added) == 3 + len(API_STAT_SENSORS) + 2
+    assert len(added) == 3 + stat_count + 2
     assert coord.added_sensor_entities == {
         "u_tec_battery_lock-1",
         "u_tec_battery_lock-2",
