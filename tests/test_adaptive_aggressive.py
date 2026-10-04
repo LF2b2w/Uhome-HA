@@ -18,6 +18,7 @@ from custom_components.u_tec.adaptive import (
 from custom_components.u_tec.const import (
     ADAPTIVE_AGGRESSIVE_INITIAL_DELAY,
     ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS,
+    DEFAULT_SCAN_INTERVAL,
 )
 from custom_components.u_tec.optimistic import (
     CONF_ADAPTIVE_AGGRESSIVE_LOCKS,
@@ -178,8 +179,28 @@ async def test_stops_when_next_delay_would_meet_idle(scheduled):
     assert coord.hass.bus.async_fire.call_args[0][1]["reason"] == "idle cap"
 
 
-async def test_default_interval_stops_before_13s(scheduled):
-    """At the 10s default, the 13s step is skipped (idle cap)."""
+async def test_default_interval_runs_full_schedule(scheduled):
+    """At the 20s default, every step including 13s fits under the idle poll."""
+    assert DEFAULT_SCAN_INTERVAL == 20
+    coord = _coordinator(idle=DEFAULT_SCAN_INTERVAL)
+    device = MagicMock()
+    device.get_state_data.return_value = {}
+    device.update_state_data = AsyncMock()
+    coord.devices["lock-1"] = device
+    coord.api.get_device_state.return_value = {"payload": {"devices": [{"id": "lock-1"}]}}
+    poller = AdaptivePoller(coord)
+    poller.start("lock-1", True)
+    delays = [scheduled[0]["delay"]]
+    while poller.is_running("lock-1"):
+        await _fire(scheduled[-1])
+        if poller.is_running("lock-1"):
+            delays.append(scheduled[-1]["delay"])
+    assert delays == confirmation_delays()
+    assert coord.hass.bus.async_fire.call_args[0][1]["reason"] == "max attempts"
+
+
+async def test_floor_interval_stops_before_13s(scheduled):
+    """At the 10s floor, the 13s step is skipped (idle cap)."""
     coord = _coordinator(idle=10)
     device = MagicMock()
     device.get_state_data.return_value = {}

@@ -62,7 +62,7 @@ async def test_polling_save_persists_and_reopens(hass, interval):
 
 
 @pytest.mark.parametrize("options,yaml,expected", [
-    ({}, {}, 10),
+    ({}, {}, 20),
     ({}, {CONF_SCAN_INTERVAL: 1}, 10),
     ({CONF_SCAN_INTERVAL: 1}, {CONF_SCAN_INTERVAL: 30}, 10),
     ({}, {CONF_SCAN_INTERVAL: 0}, 10),

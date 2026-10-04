@@ -19,8 +19,8 @@ DOMAIN = "u_tec"
 # Bound how long an unconfirmed optimistic state may override the device's
 # reported state, shared by lock/light/switch. Without it, a command the
 # device never fulfils (a lock auto-locking after an unlock, a switch command
-# that silently fails) pins the entity permanently. ~3 polls at the default
-# 10s scan interval preserves the grace period while the device physically
+# that silently fails) pins the entity permanently. 1.5 polls at the default
+# 20s scan interval (3 at the 10s floor) preserves the grace period while the device physically
 # settles, then defers to the device.
 # https://github.com/LF2b2w/Uhome-HA/issues/58
 OPTIMISTIC_TIMEOUT = timedelta(seconds=30)
@@ -34,7 +34,7 @@ MAX_CONSECUTIVE_UPDATE_FAILURES = 2
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_DISCOVERY_INTERVAL = "discovery_interval"
 
-DEFAULT_SCAN_INTERVAL = 10  # seconds
+DEFAULT_SCAN_INTERVAL = 20  # seconds
 DEFAULT_DISCOVERY_INTERVAL = 300  # seconds (5 minutes)
 # Normal-operation floor. Every install shares one vendor API that publishes
 # no rate limits, so sub-10s polling is only available through Debug Polling
