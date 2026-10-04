@@ -90,14 +90,14 @@
       },
       "polling_interval": {
         "title": "Polling Interval",
-        "description": "How often Home Assistant should poll the U-Tec API for device state (10–3600 seconds). Everyone using this integration shares the same U-Tec API, which publishes no rate limits, so please use the longest interval that works for you. 20 seconds is the recommended lock interval when Adaptive Aggressive is on: slow enough to be kind to the API, and still long enough for the full 1/2/3/5/8 confirmation sequence. With reliable push you can raise this further (300–600 seconds). The default of 10 seconds suits installs that rely mainly on polling. For short 1-second tests, use the Start debug polling button instead.",
+        "description": "How often Home Assistant should poll the U-Tec API for device state (10–3600 seconds). Everyone using this integration shares the same U-Tec API, which publishes no rate limits, so please use the longest interval that works for you. 20 seconds is the recommended lock interval when Adaptive Aggressive is on: slow enough to be kind to the API, and still long enough for the full confirmation sequence. With reliable push you can raise this further (300–600 seconds). The default of 10 seconds suits installs that rely mainly on polling. For short 1-second tests, use the Start debug polling button instead.",
         "data": {
           "scan_interval": "Poll interval"
         }
       },
       "adaptive_aggressive": {
         "title": "Adaptive Aggressive",
-        "description": "After a lock or unlock command, poll only that lock on a Fibonacci delay (1s, 2s, 3s, 5s, 8s) until the API reports the commanded state. Recommended on. U-Tec push often never arrives, and this burst stops at 5 attempts or when the next delay would be at least the idle poll interval. Passage mode is skipped.",
+        "description": "After a lock or unlock command, poll only that lock until the API reports the commanded state: four quick checks 1 second apart, then 2, 3, 5, 8 and 13 seconds (at most 9 polls, about 35 seconds). Recommended on. U-Tec push often never arrives, and this short burst is much lighter on the shared API than a fast poll interval. It stops as soon as the state is confirmed, when the next delay would be at least the idle poll interval, or when polls keep failing. Passage mode is skipped.",
         "data": {
           "locks_mode": "Locks"
         }

@@ -3,9 +3,12 @@
 Standalone from Home Assistant entity code so the burst rules can be unit
 tested without loading lock.py. The coordinator owns one AdaptivePoller.
 
-After a lock or unlock command, poll only that device on a Fibonacci delay
-(1, 2, 3, 5, 8 seconds) until the API reports the commanded state. Stop at
-5 attempts, or when the next delay would be >= the idle scan interval.
+After a lock or unlock command, poll only that device on the
+ADAPTIVE_AGGRESSIVE_DELAYS schedule (1, 1, 1, 1, 2, 3, 5, 8, 13 seconds:
+rapid checks easing into Fibonacci) until the API reports the commanded
+state. Stop when the schedule runs out, when the next delay would be >= the
+idle scan interval, or when polls keep failing (the coordinator's failure
+threshold is tripped, or this burst hits that many consecutive errors).
 
 A confirmed burst records a confirmation. A later poll or push that
 contradicts that confirmation inside one idle interval (capped at 60s)
@@ -27,11 +30,13 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    ADAPTIVE_AGGRESSIVE_DELAYS,
     ADAPTIVE_AGGRESSIVE_INITIAL_DELAY,
     ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS,
     CONFIRMATION_WINDOW_CAP,
     DEFAULT_SCAN_INTERVAL,
     EVENT_LOCK_COMMAND_FAILED,
+    MAX_CONSECUTIVE_UPDATE_FAILURES,
     SIGNAL_ADAPTIVE_POLL,
 )
 from .optimistic import is_adaptive_aggressive_enabled
@@ -43,31 +48,16 @@ LOCK_ATTRIBUTE = "lockState"
 _LOGGER = logging.getLogger(__name__)
 
 
-def next_fibonacci_delay(delay: int, prev_delay: int) -> int:
-    """Return the next Fibonacci backoff step.
-
-    prev_delay starts equal to the initial delay so the sequence is
-    1, 2, 3, 5, 8 rather than 1, 1, 2, 3, 5.
-    """
-    return int(delay) + int(prev_delay)
+def next_delay(attempts_done: int) -> int | None:
+    """Return the delay before the next attempt, or None when the schedule ends."""
+    if attempts_done >= len(ADAPTIVE_AGGRESSIVE_DELAYS):
+        return None
+    return ADAPTIVE_AGGRESSIVE_DELAYS[attempts_done]
 
 
 def confirmation_delays(max_attempts: int = ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS) -> list[int]:
-    """Return the Fibonacci delays a burst will use, from the constants."""
-    delay = ADAPTIVE_AGGRESSIVE_INITIAL_DELAY
-    prev = delay
-    seen = [delay]
-    for _ in range(max(0, max_attempts - 1)):
-        nxt = next_fibonacci_delay(delay, prev)
-        seen.append(nxt)
-        prev, delay = delay, nxt
-    return seen
-    """Return the next Fibonacci backoff step.
-
-    prev_delay starts equal to the initial delay so the sequence is
-    1, 2, 3, 5, 8 rather than 1, 1, 2, 3, 5.
-    """
-    return int(delay) + int(prev_delay)
+    """Return the delays a full burst will use, from the constants."""
+    return list(ADAPTIVE_AGGRESSIVE_DELAYS[: max(0, max_attempts)])
 
 
 def reported_locked(state_data: Any) -> bool | None:
@@ -116,7 +106,7 @@ def iter_device_payloads(response: Any):
 
 
 class AdaptivePoller:
-    """Per-device Fibonacci confirmation bursts (1, 2, 3, 5, 8s)."""
+    """Per-device confirmation bursts (1, 1, 1, 1, 2, 3, 5, 8, 13s)."""
 
     def __init__(self, coordinator) -> None:
         self.coordinator = coordinator
@@ -210,7 +200,7 @@ class AdaptivePoller:
             "expected_locked": expected_locked,
             "attempt": 0,
             "delay": initial,
-            "prev_delay": initial,
+            "failures": 0,
             "unsub": None,
         }
         _LOGGER.debug(
@@ -347,6 +337,13 @@ class AdaptivePoller:
             self.cancel(device_id, "device gone", burst=burst)
             return
 
+        # Respect the failure threshold: if regular polls are already failing,
+        # a burst only adds load to an API that is struggling.
+        failures = getattr(self.coordinator, "consecutive_update_failures", 0)
+        if isinstance(failures, int) and failures >= MAX_CONSECUTIVE_UPDATE_FAILURES:
+            self.cancel(device_id, "poll failure threshold", burst=burst, notify=True)
+            return
+
         confirmed = False
         try:
             response = await self.coordinator.api.get_device_state([device_id], None)
@@ -370,6 +367,7 @@ class AdaptivePoller:
                 device.get_state_data(),
             )
             confirmed = actual is not None and actual == expected
+            burst["failures"] = 0
         except ConfigEntryAuthFailed:
             if self._bursts.get(device_id) is burst:
                 self.cancel(device_id, "auth failed", burst=burst, notify=True)
@@ -380,6 +378,11 @@ class AdaptivePoller:
                 device_id,
                 type(err).__name__,
             )
+            if self._bursts.get(device_id) is burst:
+                burst["failures"] = int(burst.get("failures", 0)) + 1
+                if burst["failures"] >= MAX_CONSECUTIVE_UPDATE_FAILURES:
+                    self.cancel(device_id, "api errors", burst=burst, notify=True)
+                    return
 
         if self._bursts.get(device_id) is not burst:
             return
@@ -400,13 +403,12 @@ class AdaptivePoller:
             self.cancel(device_id, "max attempts", burst=burst, notify=True)
             return
 
-        prev_delay = int(burst.get("prev_delay", delay))
-        next_delay = next_fibonacci_delay(delay, prev_delay)
+        # Not None: the max-attempts check above ends the burst first.
+        upcoming = next_delay(int(burst["attempt"]))
         idle = self.idle_interval_seconds()
-        if next_delay >= idle:
+        if upcoming >= idle:
             self.cancel(device_id, "idle cap", burst=burst, notify=True)
             return
 
-        burst["prev_delay"] = delay
-        burst["delay"] = next_delay
-        self._schedule(device_id, next_delay)
+        burst["delay"] = upcoming
+        self._schedule(device_id, upcoming)

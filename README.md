@@ -27,8 +27,8 @@ U-Tec can register a webhook or a Nabu Casa cloudhook. Those pushes often never 
 Adaptive Aggressive is off until you turn it on. After a lock or unlock from Home Assistant it polls only that lock:
 
 1. The command is sent as usual.
-2. A confirmation burst polls at the Fibonacci delays from `ADAPTIVE_AGGRESSIVE_INITIAL_DELAY` and `ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS`. Today that is 1s, 2s, 3s, 5s, 8s.
-3. The burst stops when the API reports the commanded state, a push carrying `st.lock` matches it, the attempt cap is reached, or the next delay would be at least the idle poll interval.
+2. A confirmation burst polls on the `ADAPTIVE_AGGRESSIVE_DELAYS` schedule: 1s, 1s, 1s, 1s, 2s, 3s, 5s, 8s, 13s (at most 9 polls, about 35 seconds).
+3. The burst stops when the API reports the commanded state, a push carrying `st.lock` matches it, the schedule runs out, the next delay would be at least the idle poll interval, or polls keep failing (two errors in a row, or the regular poll failure threshold).
 4. Lights, switches, and every other device stay on the idle interval. Passage mode is skipped, because the lock ignores the command.
 
 A confirmed burst is remembered for one idle interval, capped at `CONFIRMATION_WINDOW_CAP` (60 seconds). A later poll or push that contradicts that confirmation is not applied. The burst is re-armed and the fresh poll wins. A new lock or unlock clears the confirmation, so the new command is not treated as a contradiction. A battery or door push cannot confirm a burst.

@@ -4,16 +4,16 @@ The timer math and stop rules do not need a running Home Assistant. The
 poller is driven by stubbing async_call_later and invoking the saved callback.
 """
 
+import asyncio
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import asyncio
 import pytest
 
 from custom_components.u_tec.adaptive import (
     AdaptivePoller,
     confirmation_delays,
-    next_fibonacci_delay,
+    next_delay,
 )
 from custom_components.u_tec.const import (
     ADAPTIVE_AGGRESSIVE_INITIAL_DELAY,
@@ -42,11 +42,17 @@ def test_list_enables_only_listed_locks():
     assert is_adaptive_aggressive_enabled(options, "lock-2") is True
 
 
-def test_fibonacci_sequence_matches_constants():
+def test_schedule_matches_constants():
     seen = confirmation_delays()
     assert seen[0] == ADAPTIVE_AGGRESSIVE_INITIAL_DELAY
     assert len(seen) == ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS
-    assert seen == [1, 2, 3, 5, 8]
+    assert seen == [1, 1, 1, 1, 2, 3, 5, 8, 13]
+    assert sum(seen) == 35  # whole burst is bounded to ~35s
+
+
+def test_next_delay_walks_schedule_then_ends():
+    assert [next_delay(n) for n in range(9)] == [1, 1, 1, 1, 2, 3, 5, 8, 13]
+    assert next_delay(9) is None
 
 
 def _coordinator(idle=20):
@@ -125,7 +131,7 @@ async def test_confirms_and_stops(scheduled):
     assert scheduled[0]["cancelled"] is False
 
 
-async def test_fibonacci_reschedule_until_max_attempts(scheduled):
+async def test_reschedule_until_max_attempts(scheduled):
     coord = _coordinator(idle=60)
     device = MagicMock()
     device.is_locked = False
@@ -162,12 +168,75 @@ async def test_stops_when_next_delay_would_meet_idle(scheduled):
 
     poller = AdaptivePoller(coord)
     poller.start("lock-1", True)
-    await _fire(scheduled[0])  # 1s, next would be 2
-    assert "lock-1" in poller._bursts
-    await _fire(scheduled[-1])  # 2s, next would be 3
-    assert "lock-1" in poller._bursts
-    await _fire(scheduled[-1])  # 3s, next would be 5 >= 4
+    # 1, 1, 1, 1, 2, 3 fire; the next delay would be 5 >= 4.
+    for expected_next in (1, 1, 1, 2, 3):
+        await _fire(scheduled[-1])
+        assert "lock-1" in poller._bursts
+        assert scheduled[-1]["delay"] == expected_next
+    await _fire(scheduled[-1])
     assert "lock-1" not in poller._bursts
+    assert coord.hass.bus.async_fire.call_args[0][1]["reason"] == "idle cap"
+
+
+async def test_default_interval_stops_before_13s(scheduled):
+    """At the 10s default, the 13s step is skipped (idle cap)."""
+    coord = _coordinator(idle=10)
+    device = MagicMock()
+    device.get_state_data.return_value = {}
+    device.update_state_data = AsyncMock()
+    coord.devices["lock-1"] = device
+    coord.api.get_device_state.return_value = {"payload": {"devices": [{"id": "lock-1"}]}}
+    poller = AdaptivePoller(coord)
+    poller.start("lock-1", True)
+    delays = [scheduled[0]["delay"]]
+    while poller.is_running("lock-1"):
+        await _fire(scheduled[-1])
+        if poller.is_running("lock-1"):
+            delays.append(scheduled[-1]["delay"])
+    assert delays == [1, 1, 1, 1, 2, 3, 5, 8]
+
+
+async def test_burst_stops_after_consecutive_api_errors(scheduled):
+    coord = _coordinator(idle=30)
+    device = MagicMock()
+    device.get_state_data.return_value = {}
+    coord.devices["lock-1"] = device
+    coord.api.get_device_state.side_effect = RuntimeError("500")
+    poller = AdaptivePoller(coord)
+    poller.start("lock-1", True)
+    await _fire(scheduled[-1])
+    assert poller.is_running("lock-1")  # one blip tolerated
+    await _fire(scheduled[-1])
+    assert not poller.is_running("lock-1")
+    assert coord.hass.bus.async_fire.call_args[0][1]["reason"] == "api errors"
+    assert coord.api.get_device_state.await_count == 2
+
+
+async def test_error_counter_resets_on_success(scheduled):
+    coord = _coordinator(idle=30)
+    device = MagicMock()
+    device.get_state_data.return_value = {}
+    device.update_state_data = AsyncMock()
+    coord.devices["lock-1"] = device
+    ok = {"payload": {"devices": [{"id": "lock-1"}]}}
+    coord.api.get_device_state.side_effect = [RuntimeError("500"), ok, RuntimeError("500"), ok]
+    poller = AdaptivePoller(coord)
+    poller.start("lock-1", True)
+    for _ in range(4):
+        await _fire(scheduled[-1])
+    assert poller.is_running("lock-1")
+
+
+async def test_burst_respects_coordinator_failure_threshold(scheduled):
+    coord = _coordinator(idle=30)
+    coord.devices["lock-1"] = MagicMock()
+    poller = AdaptivePoller(coord)
+    poller.start("lock-1", True)
+    coord.consecutive_update_failures = 2
+    await _fire(scheduled[-1])
+    assert not poller.is_running("lock-1")
+    coord.api.get_device_state.assert_not_awaited()
+    assert coord.hass.bus.async_fire.call_args[0][1]["reason"] == "poll failure threshold"
 
 
 def test_push_match_cancels_burst(scheduled):

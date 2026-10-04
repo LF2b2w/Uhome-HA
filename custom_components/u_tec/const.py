@@ -50,11 +50,14 @@ DEBUG_POLL_INTERVAL = 1  # seconds
 DEBUG_POLL_DURATION = 120  # seconds
 
 # Adaptive Aggressive lock confirmation. After a lock/unlock command, poll
-# that one device on a Fibonacci delay (1, 2, 3, 5, 8s) until the API
-# reports the commanded state. Cap at 5 attempts and never schedule a
-# delay >= the idle scan interval.
-ADAPTIVE_AGGRESSIVE_INITIAL_DELAY = 1
-ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS = 5
+# that one device on this schedule until the API reports the commanded state:
+# four quick 1s checks while the bolt moves, then easing into Fibonacci so a
+# slow cloud round trip is still caught without hammering. Bounded: at most
+# len(ADAPTIVE_AGGRESSIVE_DELAYS) polls (about 35s), never a delay >= the idle
+# scan interval, and it stops on the poll-failure threshold.
+ADAPTIVE_AGGRESSIVE_DELAYS: tuple[int, ...] = (1, 1, 1, 1, 2, 3, 5, 8, 13)
+ADAPTIVE_AGGRESSIVE_INITIAL_DELAY = ADAPTIVE_AGGRESSIVE_DELAYS[0]
+ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS = len(ADAPTIVE_AGGRESSIVE_DELAYS)
 # A confirmed state is protected for one idle interval, never longer than this.
 CONFIRMATION_WINDOW_CAP = 60
 
