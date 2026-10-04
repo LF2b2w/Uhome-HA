@@ -41,6 +41,18 @@ def coord_with_lock(hass):
     return coord, lock
 
 
+def _passage_reply(mode=1, device_id="lock-1"):
+    """Raw single-device query reply; lockMode 1 is Passage, 0 is Normal."""
+    return {"payload": {"devices": [{"id": device_id, "states": [
+        {"capability": "st.lock", "name": "lockState", "value": "unlocked"},
+        {"capability": "st.lock", "name": "lockMode", "value": mode},
+    ]}]}}
+
+
+def _fresh_check_confirms_passage(coord):
+    coord.api.query_device = AsyncMock(return_value=_passage_reply(1))
+
+
 def test_init_unique_id(coord_with_lock):
     coord, lock = coord_with_lock
     ent = UhomeLockEntity(coord, "lock-1")
@@ -580,20 +592,166 @@ def test_is_optimistic_unaffected_by_unknown_lock_mode(coord_with_lock):
     assert ent._is_optimistic() is True
 
 
-async def test_passage_mode_lock_does_not_set_optimistic(coord_with_lock, hass):
+def _passage_entity(hass, optimistic):
+    from custom_components.u_tec.optimistic import CONF_ADAPTIVE_AGGRESSIVE_LOCKS
+    from custom_components.u_tec.stats import ApiStats
+
+    entry = make_config_entry(
+        options={
+            CONF_OPTIMISTIC_LOCKS: optimistic,
+            CONF_ADAPTIVE_AGGRESSIVE_LOCKS: True,
+        }
+    )
+    entry.add_to_hass(hass)
+    lock = make_fake_lock("lock-1", name="Front Door", is_locked=False)
+    lock.lock_mode = PASSAGE_MODE
+    coord = MagicMock()
+    coord.devices = {"lock-1": lock}
+    coord.config_entry = entry
+    coord.poll_healthy_enough = True
+    coord.data = {}
+    coord.stats = ApiStats()
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = hass
+    ent.entity_id = "lock.fake_lock"
+    ent.async_write_ha_state = MagicMock()
+    return coord, lock, ent
+
+
+def _lock_logs(caplog):
+    return [
+        (r.levelname, r.getMessage())
+        for r in caplog.records
+        if r.name == "custom_components.u_tec.lock" and r.levelno >= 20
+    ]
+
+
+@pytest.mark.parametrize("optimistic", [True, False])
+async def test_confirmed_passage_skips_lock_command(hass, caplog, optimistic):
+    """Fresh check confirms Passage: no command, no optimism, no AA, one WARNING."""
+    from custom_components.u_tec.stats import SKIP_PASSAGE_MODE
+
+    coord, lock, ent = _passage_entity(hass, optimistic)
+    _fresh_check_confirms_passage(coord)
+
+    with caplog.at_level("INFO", logger="custom_components.u_tec.lock"):
+        await ent.async_lock()
+
+    coord.api.query_device.assert_awaited_once_with("lock-1")
+    lock.update_state_data.assert_awaited_once()
+    lock.lock.assert_not_awaited()
+    coord.start_adaptive_poll.assert_not_called()
+    assert ent._optimistic_is_locked is None
+    assert ent.is_locked is False
+    ent.async_write_ha_state.assert_called_once()  # HomeKit resync
+    message = (
+        "Front Door is in Passage mode (confirmed by a fresh status check);"
+        " lock command not sent (the lock would ignore it),"
+        " Adaptive Aggressive skipped"
+    )
+    assert _lock_logs(caplog) == [("WARNING", message)]
+    assert coord.stats.commands_skipped == {SKIP_PASSAGE_MODE: 1}
+    assert coord.stats.skipped_per_device == {"lock-1": 1}
+
+
+@pytest.mark.parametrize("optimistic", [True, False])
+async def test_stale_passage_cache_sends_lock_command(hass, caplog, optimistic):
+    """Fresh check says Normal: the command goes out with the normal flow."""
+    coord, lock, ent = _passage_entity(hass, optimistic)
+    coord.api.query_device = AsyncMock(return_value=_passage_reply(0))
+
+    async def _apply(_data):
+        lock.lock_mode = "Normal"
+
+    lock.update_state_data = AsyncMock(side_effect=_apply)
+
+    with caplog.at_level("INFO", logger="custom_components.u_tec.lock"):
+        await ent.async_lock()
+
+    lock.lock.assert_awaited_once()
+    coord.start_adaptive_poll.assert_called_once_with("lock-1", True)
+    assert ent._optimistic_is_locked is (True if optimistic else None)
+    assert ent.assumed_state is optimistic
+    message = (
+        "Front Door: cached Passage mode was stale (fresh status: Normal);"
+        " sending lock command"
+    )
+    assert _lock_logs(caplog) == [("INFO", message)]
+    assert coord.stats.commands_skipped == {}
+
+
+@pytest.mark.parametrize(
+    ("setup", "reason"),
+    [
+        (lambda c: setattr(c.api, "query_device", AsyncMock(side_effect=RuntimeError("500"))), "RuntimeError"),
+        (lambda c: setattr(c.api, "query_device", AsyncMock(side_effect=TimeoutError())), "TimeoutError"),
+        (lambda c: setattr(c.api, "query_device", AsyncMock(return_value={"payload": {"devices": []}})), "no lock mode in reply"),
+    ],
+    ids=["error", "timeout", "empty-reply"],
+)
+@pytest.mark.parametrize("optimistic", [True, False])
+async def test_unverified_passage_sends_lock_command(hass, caplog, optimistic, setup, reason):
+    """Check fails, times out, or says nothing: when in doubt, send the command."""
+    coord, lock, ent = _passage_entity(hass, optimistic)
+    setup(coord)
+
+    with caplog.at_level("INFO", logger="custom_components.u_tec.lock"):
+        await ent.async_lock()
+
+    lock.lock.assert_awaited_once()
+    lock.update_state_data.assert_not_awaited()
+    coord.start_adaptive_poll.assert_called_once_with("lock-1", True)
+    assert ent._optimistic_is_locked is (True if optimistic else None)
+    assert ent.assumed_state is optimistic
+    message = (
+        f"Front Door: cached Passage mode could not be verified ({reason});"
+        " sending lock command anyway"
+    )
+    assert _lock_logs(caplog) == [("INFO", message)]
+    assert coord.stats.commands_skipped == {}
+
+    # The next coordinator update trusts the reported mode again.
+    ent.async_write_ha_state = MagicMock()
+    ent._handle_coordinator_update()
+    assert ent._passage_unverified is False
+
+
+async def test_passage_check_times_out(hass):
+    """A hung query is cut off by PASSAGE_VERIFY_TIMEOUT and the command is sent."""
+    import asyncio
+
+    coord, lock, ent = _passage_entity(hass, False)
+
+    async def _hang(_device_id):
+        await asyncio.sleep(3600)
+
+    coord.api.query_device = _hang
+    with patch("custom_components.u_tec.lock.PASSAGE_VERIFY_TIMEOUT", 0.01):
+        await ent.async_lock()
+    lock.lock.assert_awaited_once()
+
+
+async def test_passage_check_error_envelope_sends_command(hass):
+    coord, lock, ent = _passage_entity(hass, False)
+    coord.api.query_device = AsyncMock(return_value=_passage_reply(1))
+    coord.raise_for_error_payload.side_effect = RuntimeError("INVALID_TOKEN")
+    await ent.async_lock()
+    lock.lock.assert_awaited_once()
+    lock.update_state_data.assert_not_awaited()
+
+
+async def test_passage_mode_unlock_is_still_sent(coord_with_lock, hass):
     coord, lock = coord_with_lock
     lock.lock_mode = PASSAGE_MODE
-    lock.is_locked = False
     ent = UhomeLockEntity(coord, "lock-1")
     ent.hass = hass
     ent.entity_id = "lock.fake_lock"
     ent.async_write_ha_state = MagicMock()
 
-    await ent.async_lock()
+    await ent.async_unlock()
 
-    lock.lock.assert_awaited_once()
-    assert ent._optimistic_is_locked is None
-    assert ent.is_locked is False  # the truth: passage mode did not lock
+    lock.unlock.assert_awaited_once()
+    coord.stats.record_command_skipped.assert_not_called()
 
 
 def test_entering_passage_mode_drops_outstanding_optimism(coord_with_lock):
@@ -634,6 +792,7 @@ async def test_passage_mode_lock_resyncs_listeners(coord_with_lock, hass):
     coord, lock = coord_with_lock
     lock.lock_mode = PASSAGE_MODE
     lock.is_locked = False
+    _fresh_check_confirms_passage(coord)
     ent = UhomeLockEntity(coord, "lock-1")
     ent.hass = hass
     ent.entity_id = "lock.fake_lock"
@@ -673,6 +832,7 @@ async def test_force_update_reset_even_if_write_raises(coord_with_lock, hass):
     """force_update must not leak on if the write blows up."""
     coord, lock = coord_with_lock
     lock.lock_mode = PASSAGE_MODE
+    _fresh_check_confirms_passage(coord)
     ent = UhomeLockEntity(coord, "lock-1")
     ent.hass = hass
     ent.entity_id = "lock.fake_lock"
@@ -695,6 +855,7 @@ async def test_passage_mode_lock_emits_real_state_event(coord_with_lock, hass):
     coord, lock = coord_with_lock
     lock.lock_mode = PASSAGE_MODE
     lock.is_locked = False
+    _fresh_check_confirms_passage(coord)
     ent = UhomeLockEntity(coord, "lock-1")
     ent.hass = hass
     ent.entity_id = "lock.fake_lock"
@@ -777,6 +938,7 @@ async def test_passage_mode_does_not_start_adaptive(hass):
     coord.consecutive_update_failures = 0
     coord.poll_healthy_enough = True
     coord.data = {}
+    _fresh_check_confirms_passage(coord)
     ent = UhomeLockEntity(coord, "lock-1")
     ent.hass = hass
     ent.entity_id = "lock.fake_lock"

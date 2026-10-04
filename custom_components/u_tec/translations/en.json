@@ -219,6 +219,9 @@
       },
       "aa_exhausted": {
         "name": "Adaptive Aggressive bursts that ran out"
+      },
+      "api_commands_skipped_passage": {
+        "name": "API commands skipped (passage mode)"
       }
     }
   },

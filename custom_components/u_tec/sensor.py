@@ -23,7 +23,7 @@ from utec_client.devices.lock import Lock as UhomeLock
 from .const import DOMAIN, SIGNAL_DEVICE_UPDATE, SIGNAL_NEW_DEVICE
 from .coordinator import UhomeDataUpdateCoordinator
 from .entity import hub_device_info
-from .stats import KIND_COMMAND, KIND_DISCOVERY, KIND_QUERY
+from .stats import KIND_COMMAND, KIND_DISCOVERY, KIND_QUERY, SKIP_PASSAGE_MODE
 
 REQUESTS = "requests"
 REQUESTS_PER_HOUR = "requests/h"
@@ -221,6 +221,13 @@ API_STAT_SENSORS: tuple[UhomeApiStatDescription, ...] = (
         native_unit_of_measurement=REQUESTS,
         state_class=SensorStateClass.TOTAL_INCREASING,
         value_fn=lambda c: c.stats.requests[KIND_COMMAND],
+    ),
+    UhomeApiStatDescription(
+        key="api_commands_skipped_passage",
+        translation_key="api_commands_skipped_passage",
+        native_unit_of_measurement=REQUESTS,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.stats.commands_skipped.get(SKIP_PASSAGE_MODE, 0),
     ),
     UhomeApiStatDescription(
         key="api_discoveries",

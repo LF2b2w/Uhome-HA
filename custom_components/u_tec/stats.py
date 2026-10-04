@@ -31,6 +31,9 @@ KINDS = (KIND_DISCOVERY, KIND_QUERY, KIND_COMMAND, KIND_OTHER)
 
 ROLLING_WINDOW = timedelta(hours=1)
 
+# Commands the integration chose not to send, by reason.
+SKIP_PASSAGE_MODE = "passage_mode"
+
 
 def _is_error_envelope(response: Any) -> bool:
     """U-Tec answers HTTP 200 with payload.error on failure."""
@@ -66,6 +69,9 @@ class ApiStats:
         self.pushes_ignored = 0
         # device_id -> {"query": n, "command": n}
         self.per_device: dict[str, dict[str, int]] = {}
+        # reason -> count, and device_id -> count, of commands not sent
+        self.commands_skipped: dict[str, int] = {}
+        self.skipped_per_device: dict[str, int] = {}
         self._recent: deque[datetime] = deque()
 
     @property
@@ -111,6 +117,11 @@ class ApiStats:
             return None
         return round(self.requests_last_hour() / device_count, 1)
 
+    def record_command_skipped(self, reason: str, device_id: str) -> None:
+        """A command the integration did not send because it would be a no-op."""
+        self.commands_skipped[reason] = self.commands_skipped.get(reason, 0) + 1
+        self.skipped_per_device[device_id] = self.skipped_per_device.get(device_id, 0) + 1
+
     def device_commands(self, device_id: str) -> int:
         return self.per_device.get(device_id, {}).get(KIND_COMMAND, 0)
 
@@ -138,6 +149,8 @@ class ApiStats:
                 "ignored": self.pushes_ignored,
             },
             "per_device": {k: dict(v) for k, v in self.per_device.items()},
+            "commands_skipped": dict(self.commands_skipped),
+            "commands_skipped_per_device": dict(self.skipped_per_device),
         }
 
 

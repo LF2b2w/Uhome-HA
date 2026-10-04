@@ -230,3 +230,24 @@ async def test_real_setup_meters_requests_and_registers_entities(hass):
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+def test_skipped_commands_are_counted_not_requested():
+    from custom_components.u_tec.sensor import API_STAT_SENSORS
+    from custom_components.u_tec.stats import SKIP_PASSAGE_MODE, ApiStats
+
+    stats = ApiStats()
+    stats.record_command_skipped(SKIP_PASSAGE_MODE, "lock-1")
+    stats.record_command_skipped(SKIP_PASSAGE_MODE, "lock-1")
+    data = stats.as_dict()
+    assert data["commands_skipped"] == {SKIP_PASSAGE_MODE: 2}
+    assert data["commands_skipped_per_device"] == {"lock-1": 2}
+    assert data["total_requests"] == 0
+    sensor = next(d for d in API_STAT_SENSORS if d.key == "api_commands_skipped_passage")
+
+    class _Coord:
+        pass
+
+    coord = _Coord()
+    coord.stats = stats
+    assert sensor.value_fn(coord) == 2

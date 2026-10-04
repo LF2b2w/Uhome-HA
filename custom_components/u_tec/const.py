@@ -49,6 +49,11 @@ MAX_SCAN_INTERVAL = 3600
 DEBUG_POLL_INTERVAL = 1  # seconds
 DEBUG_POLL_DURATION = 120  # seconds
 
+# Before skipping a lock command because the cached lock mode says Passage,
+# one fresh single-device query must confirm it. If it does not answer in
+# this many seconds, the command is sent anyway: when in doubt, send it.
+PASSAGE_VERIFY_TIMEOUT = 10  # seconds
+
 # Adaptive Aggressive lock confirmation. After a lock/unlock command, poll
 # that one device on this schedule until the API reports the commanded state:
 # four quick 1s checks while the bolt moves, then easing into Fibonacci so a

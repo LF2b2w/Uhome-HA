@@ -1,5 +1,6 @@
 """Support for Uhome locks."""
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any, cast
@@ -16,10 +17,12 @@ from homeassistant.util import dt as dt_util
 from utec_client.devices.lock import Lock as UhomeLock
 from utec_client.exceptions import DeviceError
 
+from .adaptive import iter_device_payloads
 from .const import (
     CONF_OPTIMISTIC_LOCKS,
     DOMAIN,
     OPTIMISTIC_TIMEOUT,
+    PASSAGE_VERIFY_TIMEOUT,
     SIGNAL_ADAPTIVE_POLL,
     SIGNAL_DEVICE_UPDATE,
     is_adaptive_aggressive_enabled,
@@ -28,6 +31,7 @@ from .const import (
 )
 from .coordinator import UhomeDataUpdateCoordinator
 from .debug_polling import debug_polling_active
+from .stats import SKIP_PASSAGE_MODE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,6 +69,8 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
     _optimistic_is_locked: bool | None = None
     _optimistic_set_at: datetime | None = None
     _force_next_write: bool = False
+    _passage_unverified: bool = False
+    _passage_check_error: str | None = None
 
     def __init__(self, coordinator: UhomeDataUpdateCoordinator, device_id: str) -> None:
         """Initialize the lock."""
@@ -83,6 +89,9 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         self._optimistic_is_locked: bool | None = None
         self._optimistic_set_at: datetime | None = None
         self._force_next_write = False
+        # Set when a cached Passage mode could not be confirmed and the lock
+        # command went out anyway; treat the lock as Normal until fresh data.
+        self._passage_unverified = False
 
     @property
     def force_update(self) -> bool:
@@ -130,7 +139,7 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         _handle_coordinator_update rather than here, so that is_locked and
         assumed_state cannot disagree.
         """
-        if self._device.lock_mode == PASSAGE_MODE:
+        if self._in_passage_mode():
             return False
         if debug_polling_active(self.coordinator):
             return False
@@ -142,7 +151,7 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
 
     def _start_adaptive_if_enabled(self, expected_locked: bool) -> None:
         """Kick an Adaptive Aggressive confirmation burst after a command."""
-        if self._device.lock_mode == PASSAGE_MODE:
+        if self._in_passage_mode():
             return
         if not is_adaptive_aggressive_enabled(
             self.coordinator.config_entry.options,
@@ -150,6 +159,46 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         ):
             return
         self.coordinator.start_adaptive_poll(self._device.device_id, expected_locked)
+
+    def _in_passage_mode(self) -> bool:
+        """Cached Passage mode, unless a lock command just went out because
+        that cache could not be confirmed."""
+        return self._device.lock_mode == PASSAGE_MODE and not self._passage_unverified
+
+    async def _fresh_passage_check(self) -> bool | None:
+        """Ask the API for this lock's current mode, once.
+
+        Returns True when the fresh state confirms Passage, False when it
+        shows another mode, and None when it could not be verified (error,
+        timeout, error envelope, or no lock mode in the reply). Counted as a
+        query in API accounting because it goes through the metered client.
+        """
+        device_id = self._device.device_id
+        try:
+            response = await asyncio.wait_for(
+                self.coordinator.api.query_device(device_id),
+                PASSAGE_VERIFY_TIMEOUT,
+            )
+            self.coordinator.raise_for_error_payload(response)
+        except Exception as err:  # noqa: BLE001
+            self._passage_check_error = type(err).__name__
+            return None
+        for device_data in iter_device_payloads(response):
+            if device_data.get("id") != device_id:
+                continue
+            states = device_data.get("states")
+            has_mode = isinstance(states, list) and any(
+                isinstance(s, dict)
+                and s.get("capability") == "st.lock"
+                and s.get("name") == "lockMode"
+                for s in states
+            )
+            if not has_mode:
+                break
+            await self._device.update_state_data(device_data)
+            return self._device.lock_mode == PASSAGE_MODE
+        self._passage_check_error = "no lock mode in reply"
+        return None
 
     @property
     def available(self) -> bool:
@@ -187,6 +236,8 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         reaches the commanded state the entity would stay wrong indefinitely.
         So optimism is held for OPTIMISTIC_TIMEOUT and then released.
         """
+        # Fresh data has arrived; trust the reported lock mode again.
+        self._passage_unverified = False
         if self._optimistic_is_locked is not None:
             if debug_polling_active(self.coordinator):
                 # Debug polling shows raw polled state only.
@@ -232,7 +283,48 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         return attributes
 
     async def async_lock(self, **kwargs: Any) -> None:
-        """Lock the device."""
+        """Lock the device.
+
+        A lock in Passage mode ignores a lock command. When the cached mode
+        says Passage, one fresh single-device query checks it first. Only a
+        fresh confirmation skips the command: no command call, no optimistic
+        state, no Adaptive Aggressive burst, and listeners are resynced with
+        the unchanged state so HomeKit does not hang on "Locking...". If the
+        fresh state is not Passage, or the check fails or times out, the
+        command is sent as usual. When in doubt, send the command.
+        """
+        name = self._device.name or self._device.device_id
+        self._passage_unverified = False
+        if self._device.lock_mode == PASSAGE_MODE:
+            self._passage_check_error = None
+            confirmed = await self._fresh_passage_check()
+            if confirmed:
+                _LOGGER.warning(
+                    "%s is in Passage mode (confirmed by a fresh status check);"
+                    " lock command not sent (the lock would ignore it),"
+                    " Adaptive Aggressive skipped",
+                    name,
+                )
+                self.coordinator.stats.record_command_skipped(
+                    SKIP_PASSAGE_MODE, self._device.device_id
+                )
+                self._resync_listeners()
+                return
+            if confirmed is False:
+                _LOGGER.info(
+                    "%s: cached Passage mode was stale (fresh status: %s);"
+                    " sending lock command",
+                    name,
+                    self._device.lock_mode,
+                )
+            else:
+                self._passage_unverified = True
+                _LOGGER.info(
+                    "%s: cached Passage mode could not be verified (%s);"
+                    " sending lock command anyway",
+                    name,
+                    self._passage_check_error,
+                )
         _LOGGER.debug("Locking device %s", self._device.device_id)
         try:
             await self._device.lock()
@@ -241,16 +333,6 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
                 self._optimistic_is_locked = True
                 self._optimistic_set_at = dt_util.utcnow()
                 self.async_write_ha_state()
-            elif self._device.lock_mode == PASSAGE_MODE:
-                # Passage mode ignores the command, so no state change will
-                # follow and HomeKit would hang on "Locking...". Re-assert the
-                # true state so the bridge resets its target characteristic.
-                _LOGGER.debug(
-                    "%s is in Passage mode; lock command ignored, resyncing"
-                    " listeners with the unchanged state",
-                    self._device.device_id,
-                )
-                self._resync_listeners()
         except DeviceError as err:
             _LOGGER.error("Failed to lock device %s: %s", self._device.device_id, err)
             raise HomeAssistantError(f"Failed to lock: {err}") from err
