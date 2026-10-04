@@ -21,7 +21,7 @@ Every install of this integration talks to the same U-tec cloud API. Your polls,
 
 ### We're in a good spot, and we'd like to keep it
 
-Right now U-tec offers a self-service OpenAPI: you switch it on in the app, you get your own credentials, there's no paid tier, and there are no published rate limits. That's generous, and it rests on trust that third-party clients will behave reasonably.
+Right now U-tec offers a self-service OpenAPI: you switch it on in the app, you get your own credentials, there's no paid tier, and there are no published rate limits. That's generous, and it rests on trust that third-party clients will behave reasonably. A lot of us have real money in U-tec locks, lights, switches, and plugs, and Home Assistant is how we use them. That access is worth protecting.
 
 Staying responsible is how we keep it that way. If that trust gets broken, on purpose or by accident, the reasonable response from any vendor is limits or revoked access. Other smart-home communities have been through exactly that:
 
@@ -33,22 +33,23 @@ None of that was U-tec, and we'd like it to stay that way.
 
 ### Fair use
 
-Most shared services work on fair use: what one customer uses should stay in proportion to what was provisioned for them. U-tec hasn't published a number, so we hold ourselves to a sensible one. A lock doesn't need to be asked how it's doing every second, all day.
+Most shared services work on fair use: what one customer uses should stay in proportion to what was provisioned for them. U-tec hasn't published a number, so we hold ourselves to a sensible one. A lock, a light, or a plug doesn't need to be asked how it's doing every second, all day.
 
 There's good precedent for communities doing this themselves. Elinor Ostrom won the 2009 Nobel Prize in Economics for showing, in the Academy's words, "how common property can be successfully managed by user associations" ([Nobel press release](https://www.nobelprize.org/prizes/economic-sciences/2009/press-release/)). Shared resources last when the people using them agree on sensible rules and keep to them, without anyone having to impose them from above. A polling floor and some light accounting are our version of that.
 
 ### Sensible polling
 
-- The polling interval is 10 to 3600 seconds, default 10. One poll is one bulk request for all your devices.
+- The polling interval is 10 to 3600 seconds, default 20. One poll is one bulk request for all your devices.
 - If push works for you, 300 to 600 seconds is plenty.
-- If you rely on polling, 20 to 30 seconds with Adaptive Aggressive on is a good balance for locks.
-- For scale: 10 seconds is about 8,600 requests a day per install, 30 seconds about 2,900. A 1-second interval would be 86,400.
+- If you rely on polling, the 20-second default (or 30) with Adaptive Aggressive on is a good balance, and lock commands still confirm in seconds.
+- For scale: 20 seconds is about 4,300 requests a day per install, 30 seconds about 2,900, and the 10-second floor about 8,600. A 1-second interval would be 86,400.
 
 ### Fast feedback without the heavy load
 
-You don't need a fast interval to get fast lock feedback:
+You don't need a fast interval to get fast feedback:
 
 - **Adaptive Aggressive** polls only the lock you just operated, quickly at first, then backing off, and stops as soon as the state is confirmed. That's at most 9 polls per command.
+- **Passage mode** locks ignore lock commands. If the last reported mode is Passage, Home Assistant first asks U-tec for that one lock's current mode. Only if the fresh answer confirms Passage is the lock command skipped (logged as a warning and counted under API commands skipped). If the answer says otherwise, or the check fails or times out, the command is sent as usual. When in doubt, send the command.
 - **Debug Polling Mode** gives you 1-second polling for 2 minutes when you're testing, then turns itself off. A session is about 120 requests. Leaving 1 second on all day would be 86,400.
 
 ### See your own footprint
@@ -81,11 +82,17 @@ Adaptive Aggressive is off until you turn it on. After a lock or unlock from Hom
 
 A confirmed burst is remembered for one idle interval, capped at `CONFIRMATION_WINDOW_CAP` (60 seconds). A later poll or push that contradicts that confirmation is not applied. The burst is re-armed and the fresh poll wins. A new lock or unlock clears the confirmation, so the new command is not treated as a contradiction. A battery or door push cannot confirm a burst.
 
+When a burst poll is what catches the change (not a push or a regular poll), it is logged at WARNING with the device name, the new state, the seconds since the command, and how many burst polls it took:
+
+```
+Adaptive Aggressive caught Front Door (abc123) changing to locked 4.0s after the command, on burst poll 4 of 9 (intervals: 1+1+1+1s)
+```
+
 If the burst gives up, the integration logs a warning and fires `u_tec_lock_command_failed` with `device_id`, `expected_locked`, `attempts`, and `reason`. Burst polls use their own signal, so optimistic lock updates keep their grace period instead of flickering on the first poll.
 
 ### Recommended lock settings
 
-- Polling interval: 20 to 30 seconds. Kind to the API, and longer than the 13-second final step, so the full confirmation sequence runs.
+- Polling interval: 20 seconds (the default) to 30. Kind to the API, and longer than the 13-second final step, so the full confirmation sequence runs. At the 10-second floor the 13-second step is skipped.
 - Optimistic updates for locks: off. Show what the API confirmed.
 - Adaptive Aggressive: on, for every lock or only the ones you operate from Home Assistant.
 
@@ -113,6 +120,7 @@ All on the **U-Tec Integration** device, all diagnostic. Counters live in memory
 | API requests per device (last hour) | The above divided by your device count | On |
 | API state queries | Regular polls, confirmation polls, initial state fetches | On |
 | API commands | Lock, unlock, on, off, dimming | On |
+| API commands skipped (passage mode) | Lock commands not sent because a fresh check confirmed Passage mode | On |
 | API discoveries | Device discovery, every 5 minutes | On |
 | API failures | Errors, including U-tec's HTTP 200 error replies | On |
 | Pushes received | Authenticated pushes that reached Home Assistant | On |
@@ -120,8 +128,16 @@ All on the **U-Tec Integration** device, all diagnostic. Counters live in memory
 | API last response | When the latest request finished | Off |
 | Pushes applied / Pushes ignored | Pushes that changed state, and ones that didn't (keepalives, unselected devices, debug mode) | Off |
 | API commands sent (per device) | Commands sent to that one device | Off |
+| Adaptive Aggressive bursts | Confirmation bursts started, including re-checks | On |
+| Adaptive Aggressive polls | Burst polls made (one per interval) | On |
+| Adaptive Aggressive changes caught | State changes a burst poll saw before any push or regular poll | On |
+| Adaptive Aggressive average time to detect | Seconds from command to the burst poll that caught the change | On |
+| Adaptive Aggressive average polls to detect | Burst polls it took, on average, to catch the change | Off |
+| Adaptive Aggressive bursts ended by push | Bursts a push notification answered first | On |
+| Adaptive Aggressive bursts ended by failures | Bursts stopped because polls kept failing | On |
+| Adaptive Aggressive bursts that ran out | Bursts that used the whole schedule without seeing the change | On |
 
-The diagnostics download includes the same numbers, plus per-device query and command counts.
+The diagnostics download includes the same numbers, plus per-device query and command counts and, for Adaptive Aggressive, bursts ended by a regular poll, confirmations where nothing had changed (locking a door that was already locked), cancelled bursts, and the last catch.
 
 ## Install
 
