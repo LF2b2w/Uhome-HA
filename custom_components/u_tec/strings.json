@@ -3,7 +3,7 @@
     "step": {
       "replace_credentials": {
         "title": "U-Tec credentials",
-        "description": "Enter your Client ID and Client Secret from the Xthings app (My Account \u2192 OpenAPI). Submitting will start the U-Tec authorization. The Client Secret is never displayed back \u2014 re-enter it here even if you are only rotating the secret.",
+        "description": "Community-maintained. Not made, endorsed, or supported by U-tec or Xthings. Uses each user's own OpenAPI credentials. Enter your Client ID and Client Secret from the Xthings app (My Account \u2192 OpenAPI). Submitting will start the U-Tec authorization. The Client Secret is never displayed back \u2014 re-enter it here even if you are only rotating the secret.",
         "data": {
           "client_id": "Client ID",
           "client_secret": "Client Secret"
@@ -37,6 +37,10 @@
   },
   "options": {
     "step": {
+      "init": {
+        "title": "U-Tec options",
+        "description": "Community-maintained. Not made, endorsed, or supported by U-tec or Xthings. Uses each user's own OpenAPI credentials. Everyone using this integration shares U-tec's API, so please keep polling light."
+      },
       "update_push": {
         "title": "Configure Uhome",
         "description": "Enable or disable push notifications for device updates",
@@ -90,7 +94,7 @@
       },
       "polling_interval": {
         "title": "Polling Interval",
-        "description": "How often Home Assistant should poll the U-Tec API for device state (10\u20133600 seconds). Everyone using this integration shares the same U-Tec API, which publishes no rate limits, so please use the longest interval that works for you. 20 seconds is the recommended lock interval when Adaptive Aggressive is on: slow enough to be kind to the API, and still long enough for the full confirmation sequence. With reliable push you can raise this further (300\u2013600 seconds). The default of 10 seconds suits installs that rely mainly on polling. For short 1-second tests, use the Start debug polling button instead.",
+        "description": "Minimum 10 seconds. Everyone using this integration shares U-tec's API, which has no published limits. Please use the longest interval that works for you; for quick lock confirmation, enable Adaptive Aggressive instead. 20 seconds is a good lock interval with Adaptive Aggressive on, and with reliable push you can go to 300 to 600 seconds. For a short 1-second test, use the Start debug polling button on the U-Tec Integration device.",
         "data": {
           "scan_interval": "Poll interval"
         }

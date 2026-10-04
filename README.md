@@ -1,13 +1,59 @@
 # Uhome (U-Tec)
 
-Home Assistant control for U-Tec locks, lights, switches, and sensors through the Uhome API.
+A Home Assistant custom integration for U-tec (Ultraloq) locks, lights, switches, and plugs, built on U-tec's OpenAPI.
+
+**Community-maintained. Not made, endorsed, or supported by U-tec or Xthings. Uses each user's own OpenAPI credentials.** Please send integration problems to this repository's [issues](https://github.com/LF2b2w/Uhome-HA/issues), not to U-tec support.
 
 | | |
 | --- | --- |
 | Devices | Locks, lights, switches, Wi-Fi smart plugs |
-| Talks to | U-Tec cloud API, plus an optional webhook or Nabu Casa cloudhook |
+| Talks to | U-tec cloud API, plus an optional webhook or Nabu Casa cloudhook |
 | Install | [HACS](#install) custom integration |
 | Credentials | Xthings Home app, My Account → OpenAPI |
+
+## Community responsibility
+
+This section is the why behind some of the defaults. It's short, and it matters.
+
+### One API, shared by everyone
+
+Every install of this integration talks to the same U-tec cloud API. Your polls, my polls, and everyone else's land on the same servers, next to U-tec's own app traffic. Each of us brings our own credentials, but the capacity behind them is shared.
+
+### We're in a good spot, and we'd like to keep it
+
+Right now U-tec offers a self-service OpenAPI: you switch it on in the app, you get your own credentials, there's no paid tier, and there are no published rate limits. That's generous, and it rests on trust that third-party clients will behave reasonably.
+
+Staying responsible is how we keep it that way. If that trust gets broken, on purpose or by accident, the reasonable response from any vendor is limits or revoked access. Other smart-home communities have been through exactly that:
+
+- **Tado** (2025) added daily API caps after "a small fraction of very frequent API users" drove a disproportionate share of its server costs ([home-assistant/core#151223](https://github.com/home-assistant/core/issues/151223)).
+- **Haier** (2024) sent the hOn integration developer a takedown notice over 10-second polling. It was resolved by moving to 60 seconds ([hOn FAQ](https://github.com/Andre0512/hon/blob/main/takedown_faq.md)).
+- **Chamberlain myQ** (2023) blocked third-party access entirely, and Home Assistant removed the integration ([HA blog](https://www.home-assistant.io/blog/2023/11/06/removal-of-myq-integration/)).
+
+None of that was U-tec, and we'd like it to stay that way.
+
+### Fair use
+
+Most shared services work on fair use: what one customer uses should stay in proportion to what was provisioned for them. U-tec hasn't published a number, so we hold ourselves to a sensible one. A lock doesn't need to be asked how it's doing every second, all day.
+
+There's good precedent for communities doing this themselves. Elinor Ostrom won the 2009 Nobel Prize in Economics for showing, in the Academy's words, "how common property can be successfully managed by user associations" ([Nobel press release](https://www.nobelprize.org/prizes/economic-sciences/2009/press-release/)). Shared resources last when the people using them agree on sensible rules and keep to them, without anyone having to impose them from above. A polling floor and some light accounting are our version of that.
+
+### Sensible polling
+
+- The polling interval is 10 to 3600 seconds, default 10. One poll is one bulk request for all your devices.
+- If push works for you, 300 to 600 seconds is plenty.
+- If you rely on polling, 20 to 30 seconds with Adaptive Aggressive on is a good balance for locks.
+- For scale: 10 seconds is about 8,600 requests a day per install, 30 seconds about 2,900. A 1-second interval would be 86,400.
+
+### Fast feedback without the heavy load
+
+You don't need a fast interval to get fast lock feedback:
+
+- **Adaptive Aggressive** polls only the lock you just operated, quickly at first, then backing off, and stops as soon as the state is confirmed. That's at most 9 polls per command.
+- **Debug Polling Mode** gives you 1-second polling for 2 minutes when you're testing, then turns itself off. A session is about 120 requests. Leaving 1 second on all day would be 86,400.
+
+### See your own footprint
+
+The **U-Tec Integration** device has diagnostic sensors showing what your install asks of the API: total requests, requests in the last hour, requests per device per hour, queries, commands, discoveries, failures, and pushes. If a number looks high, it probably is. Details are in [API usage sensors](#api-usage-sensors).
 
 ## What you get
 
@@ -15,14 +61,16 @@ Home Assistant control for U-Tec locks, lights, switches, and sensors through th
 - Door state, when the lock has a door sensor
 - Battery level and battery status
 - On and off for switches, plugs, and bulbs that expose the switch capability
-- SwitchLevel for dimming until U-Tec ships a real light capability
+- SwitchLevel for dimming until U-tec ships a real light capability
 - Adaptive Aggressive confirmation for locks when a push never arrives
+- Debug Polling Mode for short, self-ending 1-second test sessions
+- API usage sensors on the U-Tec Integration device
 
-The U-Tec API does not currently expose Wi-Fi bridge modules or Air Portal devices.
+The U-tec API does not currently expose Wi-Fi bridge modules or Air Portal devices.
 
 ## Adaptive Aggressive
 
-U-Tec can register a webhook or a Nabu Casa cloudhook. Those pushes often never arrive, so Home Assistant otherwise learns a lock or unlock only on the next idle poll.
+U-tec can register a webhook or a Nabu Casa cloudhook. Those pushes often never arrive, so Home Assistant otherwise learns a lock or unlock only on the next idle poll.
 
 Adaptive Aggressive is off until you turn it on. After a lock or unlock from Home Assistant it polls only that lock:
 
@@ -35,30 +83,45 @@ A confirmed burst is remembered for one idle interval, capped at `CONFIRMATION_W
 
 If the burst gives up, the integration logs a warning and fires `u_tec_lock_command_failed` with `device_id`, `expected_locked`, `attempts`, and `reason`. Burst polls use their own signal, so optimistic lock updates keep their grace period instead of flickering on the first poll.
 
-Debug progress is under `custom_components.u_tec`.
-
 ### Recommended lock settings
 
-- Polling interval: 20 seconds. Kind to the API, and still long enough for the full confirmation sequence.
+- Polling interval: 20 to 30 seconds. Kind to the API, and longer than the 13-second final step, so the full confirmation sequence runs.
 - Optimistic updates for locks: off. Show what the API confirmed.
 - Adaptive Aggressive: on, for every lock or only the ones you operate from Home Assistant.
 
 Configure → Adaptive Aggressive, after the integration is set up.
 
-## Polling interval and Debug Polling Mode
-
-Every install of this integration talks to the same U-Tec cloud API, and U-Tec publishes no rate limits for it. The polling interval is therefore 10 to 3600 seconds, with 10 as the default. One poll is one bulk request per install, so 10 seconds is about 8,600 requests a day, and 1 second would be about 86,400. Please use the longest interval that works for you. For quick lock feedback, Adaptive Aggressive polls briefly after a command instead of all day.
-
-An interval below 10 seconds saved under 0.6.1 is raised to 10 when the integration loads, with a warning in the log. A `scan_interval` below 10 in `configuration.yaml` is treated as 10.
+## Debug Polling Mode
 
 For testing, Debug Polling Mode gives you 1-second polling for a short window:
 
 - Start it with the **Start debug polling** button on the U-Tec Integration device, or the `u_tec.start_debug_polling` action. Stop it early with **Stop debug polling** or `u_tec.stop_debug_polling`.
 - It polls every second for 2 minutes, about 120 requests, then goes back to your configured interval on its own. Pressing start again while it runs does not extend it.
-- While it runs, Adaptive Aggressive, push state, and optimistic updates are paused, so what you see is raw polled state. Pushes still update the Last Push sensor.
+- While it runs, Adaptive Aggressive, push state, and optimistic updates are paused, so what you see is raw polled state. Pushes still count in the push sensors and update Last Push.
 - It ends early if polls fail enough to mark entities unavailable.
 - It is never saved. A restart or reload always comes back at your configured interval.
 - Start, stop, the reason, and the request count are logged at WARNING. The **Debug polling** diagnostic binary sensor shows whether a session is running, when it ends, and how many requests it made.
+
+## API usage sensors
+
+All on the **U-Tec Integration** device, all diagnostic. Counters live in memory and start from zero after a restart or a reload of the integration. Totals are `total_increasing`, so long-term statistics handle the reset.
+
+| Sensor | What it counts | Default |
+| --- | --- | --- |
+| API requests | Every request this install made | On |
+| API requests (last hour) | Rolling 60 minutes | On |
+| API requests per device (last hour) | The above divided by your device count | On |
+| API state queries | Regular polls, confirmation polls, initial state fetches | On |
+| API commands | Lock, unlock, on, off, dimming | On |
+| API discoveries | Device discovery, every 5 minutes | On |
+| API failures | Errors, including U-tec's HTTP 200 error replies | On |
+| Pushes received | Authenticated pushes that reached Home Assistant | On |
+| API last response time | Latency of the latest request, in ms | Off |
+| API last response | When the latest request finished | Off |
+| Pushes applied / Pushes ignored | Pushes that changed state, and ones that didn't (keepalives, unselected devices, debug mode) | Off |
+| API commands sent (per device) | Commands sent to that one device | Off |
+
+The diagnostics download includes the same numbers, plus per-device query and command counts.
 
 ## Install
 
@@ -99,10 +162,22 @@ Home Assistant must know its own URL before the next step. Settings → System �
 
 Rotate credentials from the integration's Reconfigure action. You do not need to remove the integration. Polling interval, optimistic updates, and Adaptive Aggressive are on Configure after setup.
 
+## Polling interval
+
+Configure → Polling Interval. The minimum is 10 seconds. A value below 10 saved under 0.6.1 is raised to 10 when the integration loads, with a warning in the log. A `scan_interval` below 10 in `configuration.yaml` is treated as 10.
+
+## Troubleshooting
+
+- **Lock state is slow to update.** Push is often unreliable. Turn on Adaptive Aggressive rather than lowering the interval. Check **Pushes received**: if it never moves, push isn't reaching you.
+- **Entities flap to unavailable.** Two failed polls in a row mark entities unavailable until the next good poll or push. **API failures** shows how often that's happening. Intermittent U-tec 500 errors do happen.
+- **A warning about the poll interval at startup.** Your saved interval was below the 10-second minimum and was raised to 10. Nothing else to do.
+- **Debug logs.** Settings → Devices & services → U-Tec → Enable debug logging, reproduce the problem, then disable it to download the log. Logger: `custom_components.u_tec`.
+- **Diagnostics.** The integration's ⋮ menu → Download diagnostics includes device state, coordinator health, debug polling, and API usage. Credentials are redacted.
+
 ## Help
 
-Questions and setup notes live in the [FAQ discussion](https://github.com/LF2b2w/Uhome-HA/discussions/2). Bugs go on [Issues](https://github.com/LF2b2w/Uhome-HA/issues). Pull requests are welcome.
+Questions and setup notes live in the [FAQ discussion](https://github.com/LF2b2w/Uhome-HA/discussions/2). Bugs go on [Issues](https://github.com/LF2b2w/Uhome-HA/issues). Pull requests are welcome. Changes that affect how much this integration polls or retries are worth a second reviewer.
 
 MIT licensed. See [LICENSE](./LICENSE).
 
-Made by @LF2b2w.
+Made by @LF2b2w, with contributions from the community. Not affiliated with U-tec or Xthings.
