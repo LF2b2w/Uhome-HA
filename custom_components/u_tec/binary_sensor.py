@@ -16,8 +16,8 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from utec_client.devices.lock import Lock as UhomeLock
 
 from .const import DOMAIN, SIGNAL_NEW_DEVICE
-from .button import service_device_info
 from .coordinator import UhomeDataUpdateCoordinator
+from .entity import hub_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ class UhomeDebugPollingSensor(CoordinatorEntity, BinarySensorEntity):
         super().__init__(coordinator)
         entry_id = coordinator.config_entry.entry_id
         self._attr_unique_id = f"{DOMAIN}_debug_polling_{entry_id}"
-        self._attr_device_info = service_device_info(coordinator)
+        self._attr_device_info = hub_device_info(coordinator)
 
     @property
     def available(self) -> bool:

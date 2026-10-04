@@ -133,6 +133,7 @@ async def test_diagnostics_serialises_device_properties_and_query(
 
     # Top-level keys
     assert set(result.keys()) == {
+        "api_stats",
         "config_entry",
         "coordinator_data",
         "devices",

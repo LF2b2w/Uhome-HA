@@ -1,14 +1,17 @@
-"""Support for Uhome Battery Sensors."""
+"""Support for Uhome battery, push and API accounting sensors."""
 
-from typing import cast
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, cast
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
+    SensorEntityDescription,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, EntityCategory
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTime
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo
@@ -19,6 +22,12 @@ from utec_client.devices.lock import Lock as UhomeLock
 
 from .const import DOMAIN, SIGNAL_DEVICE_UPDATE, SIGNAL_NEW_DEVICE
 from .coordinator import UhomeDataUpdateCoordinator
+from .entity import hub_device_info
+from .stats import KIND_COMMAND, KIND_DISCOVERY, KIND_QUERY
+
+REQUESTS = "requests"
+REQUESTS_PER_HOUR = "requests/h"
+PUSHES = "pushes"
 
 
 async def async_setup_entry(
@@ -34,11 +43,19 @@ async def async_setup_entry(
     entities = _create_battery_entities(coordinator)
     entities.append(UhomeLastPushSensor(coordinator))
     async_add_entities(entities)
+    async_add_entities(
+        UhomeApiStatSensor(coordinator, description)
+        for description in API_STAT_SENSORS
+    )
+    async_add_entities(_create_device_command_entities(coordinator))
 
     @callback
     def async_add_sensor_entities() -> None:
         entities = _create_battery_entities(coordinator, add_only_new=True)
         async_add_entities(entities)
+        async_add_entities(
+            _create_device_command_entities(coordinator, add_only_new=True)
+        )
 
     entry.async_on_unload(
         async_dispatcher_connect(hass, SIGNAL_NEW_DEVICE, async_add_sensor_entities)
@@ -148,12 +165,178 @@ class UhomeLastPushSensor(CoordinatorEntity, SensorEntity):
         entry_id = coordinator.config_entry.entry_id
         self._attr_unique_id = f"{DOMAIN}_last_push_{entry_id}"
         self._attr_name = "Utec Last Push"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{entry_id}_service")},
-            name="U-Tec Integration",
-            manufacturer="U-Tec",
-        )
+        self._attr_device_info = hub_device_info(coordinator)
 
     @property
     def native_value(self):
         return self.coordinator.last_push_received
+
+
+@dataclass(frozen=True, kw_only=True)
+class UhomeApiStatDescription(SensorEntityDescription):
+    """An API accounting sensor on the U-Tec Integration device."""
+
+    value_fn: Callable[[UhomeDataUpdateCoordinator], Any]
+
+
+# Counters are in memory and restart from zero after a restart or reload;
+# TOTAL_INCREASING tells statistics to treat that as a meter reset. Latency
+# and last-response change on every request, so they start disabled.
+API_STAT_SENSORS: tuple[UhomeApiStatDescription, ...] = (
+    UhomeApiStatDescription(
+        key="api_requests",
+        translation_key="api_requests",
+        native_unit_of_measurement=REQUESTS,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.stats.total_requests,
+    ),
+    UhomeApiStatDescription(
+        key="api_requests_last_hour",
+        translation_key="api_requests_last_hour",
+        native_unit_of_measurement=REQUESTS_PER_HOUR,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c: c.stats.requests_last_hour(),
+    ),
+    UhomeApiStatDescription(
+        key="api_requests_per_device_last_hour",
+        translation_key="api_requests_per_device_last_hour",
+        native_unit_of_measurement=REQUESTS_PER_HOUR,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value_fn=lambda c: c.stats.requests_per_device_last_hour(len(c.devices)),
+    ),
+    UhomeApiStatDescription(
+        key="api_queries",
+        translation_key="api_queries",
+        native_unit_of_measurement=REQUESTS,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.stats.requests[KIND_QUERY],
+    ),
+    UhomeApiStatDescription(
+        key="api_commands",
+        translation_key="api_commands",
+        native_unit_of_measurement=REQUESTS,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.stats.requests[KIND_COMMAND],
+    ),
+    UhomeApiStatDescription(
+        key="api_discoveries",
+        translation_key="api_discoveries",
+        native_unit_of_measurement=REQUESTS,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.stats.requests[KIND_DISCOVERY],
+    ),
+    UhomeApiStatDescription(
+        key="api_failures",
+        translation_key="api_failures",
+        native_unit_of_measurement=REQUESTS,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.stats.failures,
+    ),
+    UhomeApiStatDescription(
+        key="api_last_latency",
+        translation_key="api_last_latency",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.MILLISECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        entity_registry_enabled_default=False,
+        value_fn=lambda c: c.stats.last_latency_ms,
+    ),
+    UhomeApiStatDescription(
+        key="api_last_response",
+        translation_key="api_last_response",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_registry_enabled_default=False,
+        value_fn=lambda c: c.stats.last_response_at,
+    ),
+    UhomeApiStatDescription(
+        key="pushes_received",
+        translation_key="pushes_received",
+        native_unit_of_measurement=PUSHES,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda c: c.stats.pushes_received,
+    ),
+    UhomeApiStatDescription(
+        key="pushes_applied",
+        translation_key="pushes_applied",
+        native_unit_of_measurement=PUSHES,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_registry_enabled_default=False,
+        value_fn=lambda c: c.stats.pushes_applied,
+    ),
+    UhomeApiStatDescription(
+        key="pushes_ignored",
+        translation_key="pushes_ignored",
+        native_unit_of_measurement=PUSHES,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_registry_enabled_default=False,
+        value_fn=lambda c: c.stats.pushes_ignored,
+    ),
+)
+
+
+class UhomeApiStatSensor(CoordinatorEntity, SensorEntity):
+    """Diagnostic: how much this install asks of the shared U-Tec API."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    entity_description: UhomeApiStatDescription
+
+    def __init__(
+        self,
+        coordinator: UhomeDataUpdateCoordinator,
+        description: UhomeApiStatDescription,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        entry_id = coordinator.config_entry.entry_id
+        self._attr_unique_id = f"{DOMAIN}_{description.key}_{entry_id}"
+        self._attr_device_info = hub_device_info(coordinator)
+
+    @property
+    def available(self) -> bool:
+        """Always available: it reports on the API, it does not depend on it."""
+        return True
+
+    @property
+    def native_value(self):
+        return self.entity_description.value_fn(self.coordinator)
+
+
+def _create_device_command_entities(coordinator, add_only_new=False):
+    """One commands-sent counter per controllable device."""
+    entities = []
+    for device_id in coordinator.devices:
+        unique_id = f"{DOMAIN}_api_commands_{device_id}"
+        if add_only_new and unique_id in coordinator.added_sensor_entities:
+            continue
+        entities.append(UhomeDeviceCommandsSensor(coordinator, device_id))
+        coordinator.added_sensor_entities.add(unique_id)
+    return entities
+
+
+class UhomeDeviceCommandsSensor(CoordinatorEntity, SensorEntity):
+    """Diagnostic: commands sent to one device since the last restart."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "device_api_commands"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+    _attr_native_unit_of_measurement = REQUESTS
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+
+    def __init__(self, coordinator: UhomeDataUpdateCoordinator, device_id: str) -> None:
+        super().__init__(coordinator)
+        device = coordinator.devices[device_id]
+        self._device_id = device_id
+        self._attr_unique_id = f"{DOMAIN}_api_commands_{device_id}"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, device.device_id)})
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    @property
+    def native_value(self) -> int:
+        return self.coordinator.stats.device_commands(self._device_id)

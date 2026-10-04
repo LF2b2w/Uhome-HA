@@ -50,8 +50,22 @@ async def test_async_setup_entry_adds_one_per_lock(hass, coord_with_locks):
     await async_setup_entry(hass, entry, _add)
     battery_sensors = [e for e in added if isinstance(e, UhomeBatterySensorEntity)]
     assert len(battery_sensors) == 2
-    assert len(added) == 3  # 2 battery + 1 last-push
-    assert coord.added_sensor_entities == {"u_tec_battery_lock-1", "u_tec_battery_lock-2"}
+    from custom_components.u_tec.sensor import (
+        API_STAT_SENSORS,
+        UhomeApiStatSensor,
+        UhomeDeviceCommandsSensor,
+    )
+
+    # 2 battery + 1 last-push + account-level API stats + 1 commands per device
+    assert len([e for e in added if isinstance(e, UhomeApiStatSensor)]) == len(API_STAT_SENSORS)
+    assert len([e for e in added if isinstance(e, UhomeDeviceCommandsSensor)]) == 2
+    assert len(added) == 3 + len(API_STAT_SENSORS) + 2
+    assert coord.added_sensor_entities == {
+        "u_tec_battery_lock-1",
+        "u_tec_battery_lock-2",
+        "u_tec_api_commands_lock-1",
+        "u_tec_api_commands_lock-2",
+    }
 
 
 async def test_async_setup_entry_dispatch_adds_new_devices(hass, coord_with_locks):
@@ -75,8 +89,9 @@ async def test_async_setup_entry_dispatch_adds_new_devices(hass, coord_with_lock
     async_dispatcher_send(hass, SIGNAL_NEW_DEVICE)
     await hass.async_block_till_done()
 
-    assert len(added) == initial_count + 1
+    assert len(added) == initial_count + 2  # battery + commands counter
     assert "u_tec_battery_lock-3" in coord.added_sensor_entities
+    assert "u_tec_api_commands_lock-3" in coord.added_sensor_entities
 
 
 async def test_dispatch_does_not_double_add(hass, coord_with_locks):

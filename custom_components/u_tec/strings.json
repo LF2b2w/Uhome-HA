@@ -151,6 +151,47 @@
           }
         }
       }
+    },
+    "sensor": {
+      "api_requests": {
+        "name": "API requests"
+      },
+      "api_requests_last_hour": {
+        "name": "API requests (last hour)"
+      },
+      "api_requests_per_device_last_hour": {
+        "name": "API requests per device (last hour)"
+      },
+      "api_queries": {
+        "name": "API state queries"
+      },
+      "api_commands": {
+        "name": "API commands"
+      },
+      "api_discoveries": {
+        "name": "API discoveries"
+      },
+      "api_failures": {
+        "name": "API failures"
+      },
+      "api_last_latency": {
+        "name": "API last response time"
+      },
+      "api_last_response": {
+        "name": "API last response"
+      },
+      "pushes_received": {
+        "name": "Pushes received"
+      },
+      "pushes_applied": {
+        "name": "Pushes applied"
+      },
+      "pushes_ignored": {
+        "name": "Pushes ignored"
+      },
+      "device_api_commands": {
+        "name": "API commands sent"
+      }
     }
   },
   "services": {

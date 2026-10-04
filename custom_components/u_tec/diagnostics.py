@@ -109,6 +109,7 @@ async def async_get_config_entry_diagnostics(
             "device_count": len(coordinator.devices),
             "debug_polling": coordinator.debug.as_dict(),
         },
+        "api_stats": coordinator.stats.as_dict(len(coordinator.devices)),
         "devices": async_redact_data(device_data, REDACT_KEYS),
         "discovery_data": async_redact_data(discovery_data, REDACT_KEYS),
         "query_data": async_redact_data(query_data, REDACT_KEYS),

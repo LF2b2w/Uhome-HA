@@ -31,6 +31,7 @@ from .const import (
     YAML_CONFIG_KEY,
 )
 from .coordinator import UhomeDataUpdateCoordinator
+from .stats import ApiStats, MeteredApi
 
 _PLATFORMS: list[Platform] = [
     Platform.BUTTON,
@@ -196,7 +197,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         aiohttp_client.async_get_clientsession(hass), session
     )
 
-    Uhomeapi = UHomeApi(auth_data)
+    # Every request goes through MeteredApi so the API accounting sensors
+    # see discoveries, polls, commands and push registration alike.
+    stats = ApiStats()
+    Uhomeapi = MeteredApi(UHomeApi(auth_data), stats)
 
     # Explicit UI option > configuration.yaml > built-in default.
     yaml_config = hass.data.get(DOMAIN, {}).get(YAML_CONFIG_KEY, {})
@@ -212,6 +216,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         config_entry=entry,
         scan_interval=scan_interval,
         discovery_interval=discovery_interval,
+        stats=stats,
     )
 
     # Initial discovery populates self.devices before the first state poll.

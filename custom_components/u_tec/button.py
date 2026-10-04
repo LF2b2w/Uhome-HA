@@ -4,11 +4,11 @@ from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import UhomeDataUpdateCoordinator
+from .entity import hub_device_info
 
 
 async def async_setup_entry(
@@ -28,16 +28,6 @@ async def async_setup_entry(
     )
 
 
-def service_device_info(coordinator: UhomeDataUpdateCoordinator) -> DeviceInfo:
-    """The coordinator-level device, shared with the Last Push sensor."""
-    entry_id = coordinator.config_entry.entry_id
-    return DeviceInfo(
-        identifiers={(DOMAIN, f"{entry_id}_service")},
-        name="U-Tec Integration",
-        manufacturer="U-Tec",
-    )
-
-
 class _DebugPollingButton(ButtonEntity):
     """Base for the debug polling buttons."""
 
@@ -48,7 +38,7 @@ class _DebugPollingButton(ButtonEntity):
         self.coordinator = coordinator
         self._attr_translation_key = key
         self._attr_unique_id = f"{DOMAIN}_{key}_{coordinator.config_entry.entry_id}"
-        self._attr_device_info = service_device_info(coordinator)
+        self._attr_device_info = hub_device_info(coordinator)
 
 
 class UhomeStartDebugPollingButton(_DebugPollingButton):

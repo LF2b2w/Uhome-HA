@@ -12,6 +12,7 @@ from custom_components.u_tec.const import (
     SIGNAL_NEW_DEVICE,
 )
 from custom_components.u_tec.debug_polling import REASON_FAILURES, DebugPolling
+from custom_components.u_tec.stats import ApiStats
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -68,6 +69,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         config_entry: ConfigEntry,
         scan_interval: int = DEFAULT_SCAN_INTERVAL,
         discovery_interval: int = DEFAULT_DISCOVERY_INTERVAL,
+        stats: ApiStats | None = None,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -87,6 +89,9 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         # In-memory only; never persisted, so restarts and reloads come back
         # at the configured interval.
         self.debug = DebugPolling(self)
+        # API accounting, filled by MeteredApi (requests) and update_push_data
+        # (pushes). In memory only; resets on restart or reload.
+        self.stats = stats if stats is not None else ApiStats()
         self._discovery_interval = timedelta(seconds=discovery_interval)
         self._cancel_discovery: callable | None = None
         # Consecutive failed polls. Entities stay available through a single
@@ -300,12 +305,14 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         # genuine push was delivered. Stamp before payload guards so even an empty
         # keepalive counts as "push channel alive".
         self.last_push_received = dt_util.utcnow()
+        self.stats.pushes_received += 1
 
         if self.debug.active:
             # Debug polling shows raw polled state. The push still counts as
             # "channel alive" above, but is not applied and does not reset the
             # failure counter, so a failing poll path cannot be masked.
             _LOGGER.debug("Push ignored while debug polling is active: %s", push_data)
+            self.stats.pushes_ignored += 1
             return
 
         _LOGGER.debug("Processing push update: %s", push_data)
@@ -351,7 +358,10 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
 
             if not devices_data:
                 _LOGGER.debug("No device data found in push update")
+                self.stats.pushes_ignored += 1
                 return
+
+            applied = False
 
             for device_data in devices_data:
                 if not isinstance(device_data, dict):
@@ -394,6 +404,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     continue
 
                 await device.update_state_data(device_data)
+                applied = True
 
                 _LOGGER.debug(
                     "Updated device %s with push data: %s",
@@ -407,6 +418,11 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     device.get_state_data(),
                 )
 
+            if applied:
+                self.stats.pushes_applied += 1
+            else:
+                self.stats.pushes_ignored += 1
+
             # A successful authenticated push proves the channel is alive —
             # reset the poll-failure counter so entities stay available during
             # transient poll outages while push continues to deliver state.
@@ -417,3 +433,4 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
 
         except (ValueError, TypeError, AttributeError) as err:
             _LOGGER.error("Error processing push update: %s", err)
+            self.stats.pushes_ignored += 1
