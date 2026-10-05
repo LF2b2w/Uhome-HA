@@ -182,9 +182,10 @@ class UhomeApiStatDescription(SensorEntityDescription):
     value_fn: Callable[[UhomeDataUpdateCoordinator], Any]
 
 
-# Counters are in memory and restart from zero after a restart or reload;
-# TOTAL_INCREASING tells statistics to treat that as a meter reset. Latency
-# and last-response change on every request, so they start disabled.
+# Totals are saved (stats_store) and carry across reloads and restarts;
+# the last-hour figures start empty after either. TOTAL_INCREASING still
+# covers the rare reset (entry deleted and re-added, unreadable save file).
+# Latency and last-response change on every request, so they start disabled.
 API_STAT_SENSORS: tuple[UhomeApiStatDescription, ...] = (
     UhomeApiStatDescription(
         key="api_requests",

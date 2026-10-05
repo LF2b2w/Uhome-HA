@@ -32,6 +32,7 @@ from .const import (
 )
 from .coordinator import UhomeDataUpdateCoordinator
 from .stats import ApiStats, MeteredApi
+from .stats_store import StatsStore, async_remove_stats
 
 _PLATFORMS: list[Platform] = [
     Platform.BUTTON,
@@ -219,6 +220,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         stats=stats,
     )
 
+    # Bring back the saved totals before the first request is counted, so
+    # the API and Adaptive Aggressive counters carry across reloads/restarts.
+    stats_store = StatsStore(hass, entry.entry_id, stats, coordinator.adaptive.stats)
+    await stats_store.async_load()
+    # Registered first so it runs last on unload (callbacks run in reverse)
+    # and its final write includes the bursts cancelled by unload.
+    entry.async_on_unload(stats_store.async_shutdown)
+
     # Initial discovery populates self.devices before the first state poll.
     await coordinator.async_discover_devices()
     _LOGGER.debug("Initial device discovery complete")
@@ -251,6 +260,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinator": coordinator,
         "auth_data": auth_data,
         "webhook_handler": webhook_handler,
+        "stats_store": stats_store,
         # Track previous push_enabled so async_update_options can detect a real
         # change. entry.options reflects current state; without a stored prior
         # we can't tell a toggle from a no-op data update (e.g. OAuth refresh).
@@ -282,6 +292,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete the entry's saved counters when the entry is deleted."""
+    await async_remove_stats(hass, entry.entry_id)
 
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:

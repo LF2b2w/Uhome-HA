@@ -113,7 +113,9 @@ For testing, Debug Polling Mode gives you 1-second polling for a short window:
 
 ## API usage sensors
 
-All on the **U-Tec Integration** device, all diagnostic. Counters live in memory and start from zero after a restart or a reload of the integration. Totals are `total_increasing`, so long-term statistics handle the reset.
+All on the **U-Tec Integration** device, all diagnostic.
+
+Totals persist across integration reloads and Home Assistant restarts. They're saved per config entry in `.storage/u_tec.stats.<entry_id>`, at most once every 30 seconds while things are happening, and right away on reload or unload. Home Assistant also writes any pending save when it shuts down. The rolling last-hour sensors (**API requests (last hour)** and **API requests per device (last hour)**) are not saved, so they start empty after a reload or restart and refill over the next hour. If the integration crashes or the machine loses power, you can lose up to 30 seconds of counts. Deleting the integration deletes its saved totals too. Totals are `total_increasing`, so if they ever do reset (say, you remove and re-add the integration), long-term statistics treat it as a meter reset rather than a drop.
 
 | Sensor | What it counts | Default |
 | --- | --- | --- |
@@ -139,7 +141,7 @@ All on the **U-Tec Integration** device, all diagnostic. Counters live in memory
 | Adaptive Aggressive bursts ended by failures | Bursts stopped because polls kept failing | On |
 | Adaptive Aggressive bursts that ran out | Bursts that used the whole schedule without seeing the change | On |
 
-The diagnostics download includes the same numbers, plus per-device query and command counts and, for Adaptive Aggressive, bursts ended by a regular poll, confirmations where nothing had changed (locking a door that was already locked), cancelled bursts, and the last catch.
+The diagnostics download includes the same numbers, plus when counting started (the first time these totals were saved), per-device query and command counts and, for Adaptive Aggressive, bursts ended by a regular poll, confirmations where nothing had changed (locking a door that was already locked), cancelled bursts, and the last catch.
 
 ## Install
 

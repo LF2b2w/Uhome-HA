@@ -306,14 +306,14 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
         # genuine push was delivered. Stamp before payload guards so even an empty
         # keepalive counts as "push channel alive".
         self.last_push_received = dt_util.utcnow()
-        self.stats.pushes_received += 1
+        self.stats.record_push_received()
 
         if self.debug.active:
             # Debug polling shows raw polled state. The push still counts as
             # "channel alive" above, but is not applied and does not reset the
             # failure counter, so a failing poll path cannot be masked.
             _LOGGER.debug("Push ignored while debug polling is active: %s", push_data)
-            self.stats.pushes_ignored += 1
+            self.stats.record_push_outcome(applied=False)
             return
 
         _LOGGER.debug("Processing push update: %s", push_data)
@@ -359,7 +359,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
 
             if not devices_data:
                 _LOGGER.debug("No device data found in push update")
-                self.stats.pushes_ignored += 1
+                self.stats.record_push_outcome(applied=False)
                 return
 
             applied = False
@@ -419,10 +419,7 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     device.get_state_data(),
                 )
 
-            if applied:
-                self.stats.pushes_applied += 1
-            else:
-                self.stats.pushes_ignored += 1
+            self.stats.record_push_outcome(applied=applied)
 
             # A successful authenticated push proves the channel is alive —
             # reset the poll-failure counter so entities stay available during
@@ -434,4 +431,4 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
 
         except (ValueError, TypeError, AttributeError) as err:
             _LOGGER.error("Error processing push update: %s", err)
-            self.stats.pushes_ignored += 1
+            self.stats.record_push_outcome(applied=False)

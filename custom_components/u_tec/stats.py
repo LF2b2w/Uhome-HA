@@ -1,4 +1,4 @@
-"""In-memory accounting of what this install asks of the U-Tec API.
+"""Accounting of what this install asks of the U-Tec API.
 
 Every request this integration makes goes through MeteredApi, which counts it
 by kind (discovery, state query, command, other), times it, and notes
@@ -6,9 +6,11 @@ failures, including U-Tec's HTTP-200 error envelopes. The coordinator records
 push deliveries. Diagnostic sensors on the "U-Tec Integration" device and the
 diagnostics download read from ApiStats.
 
-Counters live in memory only and start from zero on every restart or reload.
-The totals use state_class TOTAL_INCREASING, so Home Assistant statistics
-treat that as a meter reset rather than a drop.
+Totals are saved per config entry by stats_store.StatsStore, so they carry
+across reloads and Home Assistant restarts. Each record method calls the
+_on_change hook, which StatsStore uses to schedule a throttled save. The
+rolling "last hour" window is kept in memory only and starts empty after a
+reload or restart.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any, ClassVar
 
@@ -33,6 +36,58 @@ ROLLING_WINDOW = timedelta(hours=1)
 
 # Commands the integration chose not to send, by reason.
 SKIP_PASSAGE_MODE = "passage_mode"
+
+
+def _count(value: Any) -> int:
+    """A stored counter, or 0 if it is missing or not a non-negative int."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
+def _number(value: Any) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        return 0.0
+    return float(value)
+
+
+def _when(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    parsed = dt_util.parse_datetime(value)
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt_util.UTC)
+    return parsed
+
+
+def _iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
+
+
+def _count_map(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(k): _count(v) for k, v in value.items() if _count(v)}
+
+
+def _add_counts(target: dict[str, int], stored: Any) -> None:
+    for key, count in _count_map(stored).items():
+        target[key] = target.get(key, 0) + count
+
+
+class _Persisted:
+    """Change hook shared by the stats classes; StatsStore sets it."""
+
+    _on_change: Callable[[], None] | None = None
+
+    def set_change_listener(self, listener: Callable[[], None] | None) -> None:
+        self._on_change = listener
+
+    def _changed(self) -> None:
+        if self._on_change is not None:
+            self._on_change()
 
 
 def _is_error_envelope(response: Any) -> bool:
@@ -54,7 +109,7 @@ def _device_ids(method: str, args: tuple, kwargs: dict) -> list[str]:
     return []
 
 
-class ApiStats:
+class ApiStats(_Persisted):
     """Counters for one config entry's API usage and push deliveries."""
 
     def __init__(self) -> None:
@@ -102,6 +157,18 @@ class ApiStats:
                     device_id, {KIND_QUERY: 0, KIND_COMMAND: 0}
                 )
                 counts[kind] += 1
+        self._changed()
+
+    def record_push_received(self) -> None:
+        self.pushes_received += 1
+        self._changed()
+
+    def record_push_outcome(self, *, applied: bool) -> None:
+        if applied:
+            self.pushes_applied += 1
+        else:
+            self.pushes_ignored += 1
+        self._changed()
 
     def _prune(self, now: datetime) -> None:
         cutoff = now - ROLLING_WINDOW
@@ -121,6 +188,7 @@ class ApiStats:
         """A command the integration did not send because it would be a no-op."""
         self.commands_skipped[reason] = self.commands_skipped.get(reason, 0) + 1
         self.skipped_per_device[device_id] = self.skipped_per_device.get(device_id, 0) + 1
+        self._changed()
 
     def device_commands(self, device_id: str) -> int:
         return self.per_device.get(device_id, {}).get(KIND_COMMAND, 0)
@@ -152,6 +220,61 @@ class ApiStats:
             "commands_skipped": dict(self.commands_skipped),
             "commands_skipped_per_device": dict(self.skipped_per_device),
         }
+
+    def to_storage(self) -> dict[str, Any]:
+        """Totals worth keeping across restarts (not the rolling window)."""
+        return {
+            "counting_since": self.counting_since.isoformat(),
+            "requests": dict(self.requests),
+            "failures": self.failures,
+            "last_latency_ms": self.last_latency_ms,
+            "last_response_at": _iso(self.last_response_at),
+            "last_failure_at": _iso(self.last_failure_at),
+            "pushes": {
+                "received": self.pushes_received,
+                "applied": self.pushes_applied,
+                "ignored": self.pushes_ignored,
+            },
+            "per_device": {k: dict(v) for k, v in self.per_device.items()},
+            "commands_skipped": dict(self.commands_skipped),
+            "skipped_per_device": dict(self.skipped_per_device),
+        }
+
+    def restore(self, data: Any) -> None:
+        """Add saved totals to this (normally fresh) instance.
+
+        Adding rather than replacing means nothing counted before the load
+        is lost. Missing or malformed fields count as zero.
+        """
+        if not isinstance(data, dict):
+            return
+        if (since := _when(data.get("counting_since"))) is not None:
+            self.counting_since = min(since, self.counting_since)
+        _add_counts(self.requests, data.get("requests"))
+        self.failures += _count(data.get("failures"))
+        if self.last_latency_ms is None and _number(data.get("last_latency_ms")):
+            self.last_latency_ms = round(_number(data["last_latency_ms"]), 1)
+        if self.last_response_at is None:
+            self.last_response_at = _when(data.get("last_response_at"))
+        if self.last_failure_at is None:
+            self.last_failure_at = _when(data.get("last_failure_at"))
+        pushes = data.get("pushes")
+        if isinstance(pushes, dict):
+            self.pushes_received += _count(pushes.get("received"))
+            self.pushes_applied += _count(pushes.get("applied"))
+            self.pushes_ignored += _count(pushes.get("ignored"))
+        per_device = data.get("per_device")
+        if isinstance(per_device, dict):
+            for device_id, stored in per_device.items():
+                if not isinstance(stored, dict):
+                    continue
+                counts = self.per_device.setdefault(
+                    str(device_id), {KIND_QUERY: 0, KIND_COMMAND: 0}
+                )
+                for kind in (KIND_QUERY, KIND_COMMAND):
+                    counts[kind] += _count(stored.get(kind))
+        _add_counts(self.commands_skipped, data.get("commands_skipped"))
+        _add_counts(self.skipped_per_device, data.get("skipped_per_device"))
 
 
 class MeteredApi:
@@ -217,13 +340,28 @@ AA_FAILURE_REASONS = frozenset({"api errors", "poll failure threshold", "auth fa
 AA_EXHAUSTED_REASONS = frozenset({"max attempts", "idle cap"})
 
 
-class AdaptiveStats:
+class AdaptiveStats(_Persisted):
     """Counters for Adaptive Aggressive confirmation bursts.
 
     One burst ends exactly once, so the outcome counters add up to
     bursts_started minus any burst still running. Averages cover only
-    bursts where a burst poll caught a real state change. In memory only.
+    bursts where a burst poll caught a real state change. Saved with the
+    API totals by StatsStore.
     """
+
+    _COUNTERS = (
+        "bursts_started",
+        "rearms",
+        "polls",
+        "poll_failures",
+        "changes_caught",
+        "confirmed_without_change",
+        "ended_by_poll",
+        "ended_by_push",
+        "ended_by_failures",
+        "exhausted",
+        "cancelled",
+    )
 
     def __init__(self) -> None:
         self.counting_since: datetime = dt_util.utcnow()
@@ -246,11 +384,13 @@ class AdaptiveStats:
         self.bursts_started += 1
         if rearm:
             self.rearms += 1
+        self._changed()
 
     def record_poll(self, *, ok: bool) -> None:
         self.polls += 1
         if not ok:
             self.poll_failures += 1
+        self._changed()
 
     def record_caught(
         self, device_id: str, seconds: float, polls: int, state: str
@@ -265,6 +405,7 @@ class AdaptiveStats:
             "polls": polls,
             "at": dt_util.utcnow().isoformat(),
         }
+        self._changed()
 
     def record_end(self, reason: str, *, changed: bool = True) -> None:
         if reason == AA_END_CAUGHT:
@@ -281,6 +422,7 @@ class AdaptiveStats:
         else:
             # restarted, debug polling, unload, device gone
             self.cancelled += 1
+        self._changed()
 
     @property
     def avg_seconds_to_detect(self) -> float | None:
@@ -316,3 +458,28 @@ class AdaptiveStats:
             },
             "last_caught": self.last_caught,
         }
+
+    def to_storage(self) -> dict[str, Any]:
+        """Totals plus the sums behind the averages."""
+        data: dict[str, Any] = {
+            "counting_since": self.counting_since.isoformat(),
+            "caught_seconds_total": round(self._caught_seconds_total, 3),
+            "caught_polls_total": self._caught_polls_total,
+            "last_caught": self.last_caught,
+        }
+        for name in self._COUNTERS:
+            data[name] = getattr(self, name)
+        return data
+
+    def restore(self, data: Any) -> None:
+        """Add saved totals to this (normally fresh) instance."""
+        if not isinstance(data, dict):
+            return
+        if (since := _when(data.get("counting_since"))) is not None:
+            self.counting_since = min(since, self.counting_since)
+        for name in self._COUNTERS:
+            setattr(self, name, getattr(self, name) + _count(data.get(name)))
+        self._caught_seconds_total += _number(data.get("caught_seconds_total"))
+        self._caught_polls_total += _count(data.get("caught_polls_total"))
+        if self.last_caught is None and isinstance(data.get("last_caught"), dict):
+            self.last_caught = dict(data["last_caught"])
