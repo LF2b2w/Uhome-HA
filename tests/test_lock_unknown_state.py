@@ -39,6 +39,17 @@ def make_real_lock():
     return lock
 
 
+@pytest.fixture(autouse=True)
+async def cleanup_entities(hass):
+    """Remove manually added entities and their coordinator/dispatcher listeners."""
+    entities = []
+    hass.data["test_unknown_lock_entities"] = entities
+    yield
+    for entity in reversed(entities):
+        await entity.async_remove()
+    await hass.async_block_till_done()
+
+
 async def add_entity(hass, mock_uhome_api, lock, *, optimistic=False):
     entry = make_config_entry(options={"optimistic_locks": optimistic})
     entry.add_to_hass(hass)
@@ -53,6 +64,7 @@ async def add_entity(hass, mock_uhome_api, lock, *, optimistic=False):
     entity = UhomeLockEntity(coordinator, "lock-1")
     entity.hass = hass
     entity.entity_id = "lock.test_lock"
+    hass.data["test_unknown_lock_entities"].append(entity)
     await entity.async_added_to_hass()
     entity.async_write_ha_state()
     await hass.async_block_till_done()
