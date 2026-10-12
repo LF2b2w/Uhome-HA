@@ -24,9 +24,9 @@ from .const import (
     SIGNAL_DEVICE_UPDATE,
     is_adaptive_aggressive_enabled,
     is_optimistic_enabled,
-    push_asserts_state,
 )
 from .coordinator import UhomeDataUpdateCoordinator
+from .lock_state import reported_locked
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -159,11 +159,11 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         return self.coordinator.poll_healthy_enough and self._device.available
 
     @property
-    def is_locked(self) -> bool:
+    def is_locked(self) -> bool | None:
         """Return true if the lock is locked."""
         if self._optimistic_is_locked is not None:
             return self._optimistic_is_locked
-        return self._device.is_locked
+        return reported_locked(self._device.get_state_data())
 
     @property
     def is_jammed(self) -> bool:
@@ -185,6 +185,7 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         So optimism is held for OPTIMISTIC_TIMEOUT and then released.
         """
         if self._optimistic_is_locked is not None:
+            reported = reported_locked(self._device.get_state_data())
             if self._device.lock_mode == PASSAGE_MODE:
                 # The lock entered Passage mode while optimism was outstanding.
                 # It will never confirm, and _is_optimistic() now reports False,
@@ -192,7 +193,7 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
                 # while assumed_state claims it is confirmed. Drop it now.
                 self._optimistic_is_locked = None
                 self._optimistic_set_at = None
-            elif self._optimistic_is_locked == self._device.is_locked:
+            elif reported is self._optimistic_is_locked:
                 self._optimistic_is_locked = None
                 self._optimistic_set_at = None
             elif self._optimistic_set_at is None:
@@ -303,9 +304,10 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
 
         By the time this fires, the coordinator has already applied the push to
         the device (coordinator.update_push_data calls device.update_state_data
-        before dispatching), so self._device.is_locked reflects the pushed
-        state. A push that authoritatively contradicts an outstanding optimistic
-        value drops the optimism immediately rather than waiting out
+        before dispatching). The normalized callback payload is authoritative
+        only when it contains a recognized locked/unlocked value. A push that
+        contradicts an outstanding optimistic value drops optimism immediately
+        rather than waiting out
         OPTIMISTIC_TIMEOUT -- this corrects the #58 auto-lock case (device
         re-locks itself after an unlock) within seconds.
 
@@ -316,10 +318,11 @@ class UhomeLockEntity(CoordinatorEntity, LockEntity):
         mid-command. A push that agrees, omits lock state, or leaves it
         unchanged stays on the confirm/timeout path.
         """
+        observed = reported_locked(push_data)
         if (
             self._optimistic_is_locked is not None
-            and push_asserts_state(push_data, "st.lock", "lockState")
-            and self._optimistic_is_locked != self._device.is_locked
+            and observed is not None
+            and self._optimistic_is_locked != observed
         ):
             self._optimistic_is_locked = None
             self._optimistic_set_at = None

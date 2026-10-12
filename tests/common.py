@@ -20,7 +20,8 @@ def make_config_entry(
     return MockConfigEntry(
         domain=DOMAIN,
         entry_id=entry_id,
-        data=data or {
+        data=data
+        or {
             "auth_implementation": "u_tec",
             "token": {
                 "access_token": "test-access",
@@ -132,4 +133,17 @@ def make_fake_lock(
     mock.unlock = AsyncMock(return_value=None)
     mock.update = AsyncMock(return_value=None)
     mock.update_state_data = AsyncMock(return_value=None)
+    mock.get_state_data = MagicMock(
+        return_value={"st.lock": {"lockState": "Locked" if is_locked else "Unlocked"}}
+    )
     return mock
+
+
+def set_fake_lock_report(lock: MagicMock, locked: bool | None) -> None:
+    """Set a coherent client value and normalized snapshot for lock tests."""
+    lock.is_locked = locked if locked is not None else False
+    lock.get_state_data.return_value = (
+        {}
+        if locked is None
+        else {"st.lock": {"lockState": "Locked" if locked else "Unlocked"}}
+    )

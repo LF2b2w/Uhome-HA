@@ -17,8 +17,15 @@ Home Assistant control for U-Tec locks, lights, switches, and sensors through th
 - On and off for switches, plugs, and bulbs that expose the switch capability
 - SwitchLevel for dimming until U-Tec ships a real light capability
 - Adaptive Aggressive confirmation for locks when a push never arrives
+- Unknown lock state when the API has no recognized locked/unlocked report
 
 The U-Tec API does not currently expose Wi-Fi bridge modules or Air Portal devices.
+
+## Lock state
+
+The lock entity shows locked or unlocked only when the API reports a recognized state. If that report is missing or unrecognized, Home Assistant shows the lock as unknown rather than assuming it is unlocked, provided the device and coordinator are available. Missing or offline device health makes the entity unavailable, even when a lock position is present. An available lock reporting a jammed condition shows Home Assistant's jammed state, which takes precedence over an unknown position. The diagnostic `lock_state` attribute remains the device's raw reported state.
+
+With optimistic lock updates enabled, a lock or unlock command is shown immediately while the integration waits for device confirmation. A matching report confirms it; an unknown or partial report neither confirms nor contradicts it. Optimism is bounded by the integration's existing grace period and may also be cleared by a definite contradictory push. Updates are callback-driven, so this is not a promise of an exact timer or webhook delivery time.
 
 ## Adaptive Aggressive
 
