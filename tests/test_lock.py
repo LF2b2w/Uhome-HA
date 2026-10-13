@@ -4,7 +4,6 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
@@ -23,7 +22,12 @@ from custom_components.u_tec.lock import (
     UhomeLockEntity,
     async_setup_entry,
 )
-from tests.common import make_config_entry, make_fake_lock, make_fake_switch
+from tests.common import (
+    make_config_entry,
+    make_fake_lock,
+    make_fake_switch,
+    set_fake_lock_report,
+)
 
 
 @pytest.fixture
@@ -104,6 +108,7 @@ def test_extra_state_attributes_omit_door_sensor_when_absent(coord_with_lock):
 # async_setup_entry filters non-lock devices
 # ---------------------------------------------------------------------------
 
+
 async def test_setup_entry_excludes_non_lock_devices(hass):
     """Non-lock devices in coordinator.devices must NOT produce entities."""
     entry = make_config_entry()
@@ -134,6 +139,7 @@ async def test_setup_entry_excludes_non_lock_devices(hass):
 # available: device offline OR consecutive poll failures threshold
 # ---------------------------------------------------------------------------
 
+
 def test_available_false_when_consecutive_polls_failed(coord_with_lock):
     coord, lock = coord_with_lock
     coord.poll_healthy_enough = False
@@ -153,25 +159,37 @@ def test_available_false_when_device_unavailable(coord_with_lock):
 # is_locked returns optimistic value when set
 # ---------------------------------------------------------------------------
 
+
 def test_is_locked_returns_optimistic_when_set(coord_with_lock):
     coord, lock = coord_with_lock
-    lock.is_locked = False  # device says unlocked
+    set_fake_lock_report(lock, False)
     ent = UhomeLockEntity(coord, "lock-1")
     ent._optimistic_is_locked = True  # optimistic says locked
     assert ent.is_locked is True
 
 
-def test_is_locked_returns_device_value_when_no_optimistic(coord_with_lock):
+def test_is_locked_returns_normalized_device_value_when_no_optimistic(coord_with_lock):
     coord, lock = coord_with_lock
-    lock.is_locked = False
+    lock.get_state_data.return_value = {"st.lock": {"lockState": "Unlocked"}}
     ent = UhomeLockEntity(coord, "lock-1")
     assert ent._optimistic_is_locked is None
     assert ent.is_locked is False
 
 
+def test_is_locked_is_unknown_when_normalized_state_is_missing(coord_with_lock):
+    coord, lock = coord_with_lock
+    lock.is_locked = False  # client fallback must not appear as a real unlock
+    lock.get_state_data.return_value = {}
+    ent = UhomeLockEntity(coord, "lock-1")
+    assert ent.is_locked is None
+    assert ent.available is True
+    assert ent.is_jammed is False
+
+
 # ---------------------------------------------------------------------------
 # is_jammed delegates to device
 # ---------------------------------------------------------------------------
+
 
 def test_is_jammed_true_when_device_jammed(coord_with_lock):
     coord, lock = coord_with_lock
@@ -184,10 +202,26 @@ def test_is_jammed_true_when_device_jammed(coord_with_lock):
 # _handle_coordinator_update clears optimistic only on match
 # ---------------------------------------------------------------------------
 
+
+@pytest.mark.parametrize(("optimistic", "reported"), [(True, False), (False, True)])
+def test_handle_coordinator_update_keeps_optimistic_when_opposite(
+    coord_with_lock, optimistic, reported
+):
+    """Neither lock nor unlock optimism clears on an opposite confirmed state."""
+    coord, lock = coord_with_lock
+    set_fake_lock_report(lock, reported)
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = MagicMock()
+    ent.async_write_ha_state = MagicMock()
+    ent._optimistic_is_locked = optimistic
+    ent._handle_coordinator_update()
+    assert ent._optimistic_is_locked is optimistic
+
+
 def test_handle_coordinator_update_keeps_optimistic_when_unconfirmed(coord_with_lock):
     """Optimistic=True but device still says unlocked → keep optimistic."""
     coord, lock = coord_with_lock
-    lock.is_locked = False  # device hasn't caught up yet
+    set_fake_lock_report(lock, False)  # device hasn't caught up yet
     ent = UhomeLockEntity(coord, "lock-1")
     ent.hass = MagicMock()
     ent.async_write_ha_state = MagicMock()
@@ -198,10 +232,26 @@ def test_handle_coordinator_update_keeps_optimistic_when_unconfirmed(coord_with_
     assert ent._optimistic_is_locked is True
 
 
+def test_handle_coordinator_update_does_not_clear_optimistic_when_unknown(
+    coord_with_lock,
+):
+    coord, lock = coord_with_lock
+    lock.get_state_data.return_value = {}
+    ent = UhomeLockEntity(coord, "lock-1")
+    ent.hass = MagicMock()
+    ent.async_write_ha_state = MagicMock()
+    ent._optimistic_is_locked = True
+    ent._optimistic_set_at = dt_util.utcnow()
+
+    ent._handle_coordinator_update()
+
+    assert ent._optimistic_is_locked is True
+
+
 def test_handle_coordinator_update_clears_optimistic_when_confirmed(coord_with_lock):
     """Optimistic=True and device confirms locked → clear optimistic."""
     coord, lock = coord_with_lock
-    lock.is_locked = True  # device confirmed
+    set_fake_lock_report(lock, True)  # device confirmed
     ent = UhomeLockEntity(coord, "lock-1")
     ent.hass = MagicMock()
     ent.async_write_ha_state = MagicMock()
@@ -212,10 +262,12 @@ def test_handle_coordinator_update_clears_optimistic_when_confirmed(coord_with_l
     assert ent._optimistic_is_locked is None
 
 
-def test_handle_coordinator_update_clears_optimistic_unlocked_confirmed(coord_with_lock):
+def test_handle_coordinator_update_clears_optimistic_unlocked_confirmed(
+    coord_with_lock,
+):
     """Optimistic=False (unlocked) and device confirms unlocked → clear."""
     coord, lock = coord_with_lock
-    lock.is_locked = False
+    set_fake_lock_report(lock, False)
     ent = UhomeLockEntity(coord, "lock-1")
     ent.hass = MagicMock()
     ent.async_write_ha_state = MagicMock()
@@ -229,6 +281,7 @@ def test_handle_coordinator_update_clears_optimistic_unlocked_confirmed(coord_wi
 # ---------------------------------------------------------------------------
 # async_lock DeviceError → HomeAssistantError
 # ---------------------------------------------------------------------------
+
 
 async def test_async_lock_device_error_raises_ha_error(coord_with_lock, hass):
     coord, lock = coord_with_lock
@@ -279,6 +332,7 @@ async def test_async_lock_error_does_not_set_optimistic(coord_with_lock, hass):
 # async_unlock DeviceError → HomeAssistantError
 # ---------------------------------------------------------------------------
 
+
 async def test_async_unlock_device_error_raises_ha_error(coord_with_lock, hass):
     coord, lock = coord_with_lock
     lock.unlock = AsyncMock(side_effect=DeviceError("unlock failed"))
@@ -312,6 +366,7 @@ async def test_async_unlock_device_error_logs_error(coord_with_lock, hass):
 # async_added_to_hass registers dispatcher signal
 # ---------------------------------------------------------------------------
 
+
 async def test_async_added_to_hass_registers_dispatcher(coord_with_lock, hass):
     coord, lock = coord_with_lock
     ent = UhomeLockEntity(coord, "lock-1")
@@ -335,6 +390,7 @@ async def test_async_added_to_hass_registers_dispatcher(coord_with_lock, hass):
 # _handle_push_update calls async_write_ha_state
 # ---------------------------------------------------------------------------
 
+
 def test_handle_push_update_writes_ha_state(coord_with_lock):
     coord, lock = coord_with_lock
     ent = UhomeLockEntity(coord, "lock-1")
@@ -356,14 +412,14 @@ def test_push_disagreement_clears_optimistic_immediately(coord_with_lock):
 
     The #58 case: user unlocked (optimistic=unlocked), auto-lock re-locked the
     device, and the device pushes "locked". The coordinator has already applied
-    the push, so _device.is_locked is True.
+    the push, so the normalized device state is Locked.
     """
     coord, lock = coord_with_lock
     ent = UhomeLockEntity(coord, "lock-1")
     ent.async_write_ha_state = MagicMock()
     ent._optimistic_is_locked = False  # user asked for unlocked
     ent._optimistic_set_at = dt_util.utcnow()
-    lock.is_locked = True  # push already applied: device says locked
+    set_fake_lock_report(lock, True)  # push already applied: device says locked
 
     ent._handle_push_update(_PUSH_WITH_LOCK)
 
@@ -386,7 +442,7 @@ def test_partial_push_without_lock_state_does_not_clear(coord_with_lock):
     ent._optimistic_is_locked = True  # user asked for locked
     stamp = dt_util.utcnow()
     ent._optimistic_set_at = stamp
-    lock.is_locked = False  # fallback False: capability was wiped by the push
+    set_fake_lock_report(lock, None)  # capability was wiped by the push
 
     ent._handle_push_update(_PUSH_NO_LOCK)
 
@@ -403,7 +459,7 @@ def test_push_agreement_keeps_optimistic(coord_with_lock):
     ent._optimistic_is_locked = True
     stamp = dt_util.utcnow()
     ent._optimistic_set_at = stamp
-    lock.is_locked = True  # push agrees
+    set_fake_lock_report(lock, True)  # push agrees
 
     ent._handle_push_update(_PUSH_WITH_LOCK)
 
@@ -471,10 +527,11 @@ def test_confirm_clears_stamp_so_next_command_gets_fresh_clock(coord_with_lock):
 # Optimistic state must not pin forever when the device never confirms
 # ---------------------------------------------------------------------------
 
+
 async def test_optimistic_clears_once_device_confirms(coord_with_lock, hass):
     """The happy path: optimistic state is released when the device agrees."""
     coord, lock = coord_with_lock
-    lock.is_locked = False
+    set_fake_lock_report(lock, False)
     ent = UhomeLockEntity(coord, "lock-1")
     ent.hass = hass
     ent.entity_id = "lock.fake_lock"
@@ -484,7 +541,7 @@ async def test_optimistic_clears_once_device_confirms(coord_with_lock, hass):
     assert ent.is_locked is True  # optimistic
     assert ent.assumed_state is True
 
-    lock.is_locked = True  # device catches up
+    set_fake_lock_report(lock, True)  # device catches up
     ent._handle_coordinator_update()
 
     assert ent._optimistic_is_locked is None
@@ -500,7 +557,7 @@ async def test_optimistic_times_out_when_device_never_confirms(coord_with_lock, 
     stayed wrong indefinitely.
     """
     coord, lock = coord_with_lock
-    lock.is_locked = True
+    set_fake_lock_report(lock, True)
     ent = UhomeLockEntity(coord, "lock-1")
     ent.hass = hass
     ent.entity_id = "lock.fake_lock"
@@ -555,6 +612,7 @@ def test_missing_stamp_starts_the_clock_rather_than_clearing(coord_with_lock):
 # Passage mode ignores lock commands, so optimism there is always wrong
 # ---------------------------------------------------------------------------
 
+
 def test_is_optimistic_false_in_passage_mode(coord_with_lock):
     coord, lock = coord_with_lock
     lock.lock_mode = PASSAGE_MODE
@@ -583,7 +641,7 @@ def test_is_optimistic_unaffected_by_unknown_lock_mode(coord_with_lock):
 async def test_passage_mode_lock_does_not_set_optimistic(coord_with_lock, hass):
     coord, lock = coord_with_lock
     lock.lock_mode = PASSAGE_MODE
-    lock.is_locked = False
+    set_fake_lock_report(lock, False)
     ent = UhomeLockEntity(coord, "lock-1")
     ent.hass = hass
     ent.entity_id = "lock.fake_lock"
@@ -624,6 +682,7 @@ def test_entering_passage_mode_drops_outstanding_optimism(coord_with_lock):
 # ---------------------------------------------------------------------------
 # Passage-mode lock commands must still notify listeners (HomeKit resync)
 # ---------------------------------------------------------------------------
+
 
 async def test_passage_mode_lock_resyncs_listeners(coord_with_lock, hass):
     """A passage-mode lock command changes nothing, so nothing would notify
@@ -714,7 +773,6 @@ async def test_passage_mode_lock_emits_real_state_event(coord_with_lock, hass):
     matching = [e for e in events if e.data["entity_id"] == "lock.fake_lock"]
     assert matching, "an identical state must still emit state_changed when forced"
     assert matching[0].data["new_state"].state == before.state
-
 
 
 async def test_async_lock_starts_adaptive_when_enabled(hass):

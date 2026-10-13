@@ -34,12 +34,9 @@ from .const import (
     EVENT_LOCK_COMMAND_FAILED,
     SIGNAL_ADAPTIVE_POLL,
 )
+from .lock_state import reported_locked
 from .optimistic import is_adaptive_aggressive_enabled
 
-_LOGGER = logging.getLogger(__name__)
-
-LOCK_CAPABILITY = "st.lock"
-LOCK_ATTRIBUTE = "lockState"
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -68,30 +65,6 @@ def confirmation_delays(max_attempts: int = ADAPTIVE_AGGRESSIVE_MAX_ATTEMPTS) ->
     1, 2, 3, 5, 8 rather than 1, 1, 2, 3, 5.
     """
     return int(delay) + int(prev_delay)
-
-
-def reported_locked(state_data: Any) -> bool | None:
-    """Return the lock state only when the payload actually carries it.
-
-    Lock.is_locked falls back to False when st.lock is missing, which is
-    indistinguishable from a real unlock. Battery and door pushes must not
-    confirm a burst.
-    """
-    if not isinstance(state_data, dict):
-        return None
-    cap = state_data.get(LOCK_CAPABILITY)
-    if not isinstance(cap, dict) or LOCK_ATTRIBUTE not in cap:
-        return None
-    value = cap[LOCK_ATTRIBUTE]
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.lower()
-        if lowered == "locked":
-            return True
-        if lowered == "unlocked":
-            return False
-    return None
 
 
 def iter_device_payloads(response: Any):
