@@ -15,7 +15,11 @@ discovery-import collection — plain deterministic coroutines.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
+from homeassistant.util import dt as dt_util
 import pytest
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.u_tec.const import CONF_ADAPTIVE_AGGRESSIVE_LOCKS
 from custom_components.u_tec.coordinator import UhomeDataUpdateCoordinator
@@ -206,7 +210,11 @@ async def test_push_excluded_device_keeps_polling_until_confirming_api_read(
     mock_uhome_api.get_device_state.return_value = {
         "payload": {"devices": [_raw_state(locked=True)]}
     }
-    await coordinator.adaptive.async_tick(LOCK_ID)
+    # Fire the scheduled callback so its timer is consumed before confirmation.
+    async_fire_time_changed(
+        coordinator.hass, dt_util.utcnow() + timedelta(seconds=2)
+    )
+    await coordinator.hass.async_block_till_done()
 
     mock_uhome_api.get_device_state.assert_awaited_once_with([LOCK_ID], None)
     assert lock.lock_state == "Locked"
