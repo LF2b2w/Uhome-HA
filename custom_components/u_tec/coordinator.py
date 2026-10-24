@@ -372,15 +372,6 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                 if self._defer_contradicting_report(device_id, state_data):
                     continue
 
-                # A confirming push stops the burst even when this lock is
-                # excluded from push selection. Applying the payload still
-                # respects that filter.
-                self.adaptive.cancel_if_confirmed(
-                    device_id,
-                    device,
-                    reason="push",
-                    state_data=state_data,
-                )
                 if self.push_devices and device_id not in self.push_devices:
                     _LOGGER.debug(
                         "Skipping push update for device %s (not in selected devices)",
@@ -389,6 +380,12 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     continue
 
                 await device.update_state_data(device_data)
+                self.adaptive.cancel_if_confirmed(
+                    device_id,
+                    device,
+                    reason="push",
+                    state_data=state_data,
+                )
 
                 _LOGGER.debug(
                     "Updated device %s with push data: %s",

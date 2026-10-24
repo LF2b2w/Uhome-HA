@@ -96,10 +96,14 @@ async def test_confirming_poll_stops_burst_and_records_confirmation(
     assert lock.lock_state == "Locked"  # confirming poll still applied
 
 
-async def test_confirming_push_stops_burst_and_records_confirmation(coordinator):
-    """A push report matching the commanded state stops the burst."""
+@pytest.mark.parametrize("push_devices", [[], [LOCK_ID]])
+async def test_confirming_push_stops_burst_and_records_confirmation(
+    coordinator, push_devices
+):
+    """An eligible push matching the commanded state stops the burst."""
     lock = await _make_device(coordinator.api, locked=False)
     coordinator.devices[LOCK_ID] = lock
+    coordinator.push_devices = push_devices
     coordinator.start_adaptive_poll(LOCK_ID, expected_locked=True)
     assert coordinator.adaptive.is_running(LOCK_ID)
 
@@ -110,6 +114,28 @@ async def test_confirming_push_stops_burst_and_records_confirmation(coordinator)
     assert not coordinator.adaptive.is_running(LOCK_ID)
     assert coordinator.adaptive.young_confirmation(LOCK_ID)["locked"] is True
     assert lock.lock_state == "Locked"  # confirming push still applied
+
+
+@pytest.mark.parametrize("source", ["push", "poll"])
+async def test_report_without_lock_evidence_does_not_confirm(
+    coordinator, mock_uhome_api, source
+):
+    """An eligible report needs lock evidence to confirm an active burst."""
+    lock = await _make_device(mock_uhome_api, locked=False)
+    coordinator.devices[LOCK_ID] = lock
+    coordinator.push_devices = [LOCK_ID]
+    coordinator.start_adaptive_poll(LOCK_ID, expected_locked=True)
+    response = {"payload": {"devices": [{"id": LOCK_ID, "states": []}]}}
+
+    if source == "push":
+        await coordinator.update_push_data(response)
+    else:
+        mock_uhome_api.get_device_state.return_value = response
+        await coordinator._async_update_data()
+
+    assert coordinator.adaptive.is_running(LOCK_ID)
+    assert coordinator.adaptive.young_confirmation(LOCK_ID) is None
+    assert lock.lock_state == "Unknown"  # real client applies the empty state
 
 
 async def test_contradicting_poll_after_young_confirmation_is_deferred(
@@ -158,11 +184,10 @@ async def test_contradicting_push_after_young_confirmation_is_deferred(coordinat
     assert coordinator.adaptive.expected_locked(LOCK_ID) is True
 
 
-async def test_push_excluded_device_confirming_push_stops_burst_without_applying(
-    coordinator,
+async def test_push_excluded_device_keeps_polling_until_confirming_api_read(
+    coordinator, mock_uhome_api
 ):
-    """A confirming report stops the burst for a push-excluded lock, but the
-    payload itself is still filtered out of application."""
+    """An excluded push cannot confirm stale cache; an allowed API read can."""
     lock = await _make_device(coordinator.api, locked=False)
     coordinator.devices[LOCK_ID] = lock
     coordinator.push_devices = ["other-lock"]  # LOCK_ID is not selected
@@ -173,6 +198,17 @@ async def test_push_excluded_device_confirming_push_stops_burst_without_applying
         {"payload": {"devices": [_raw_state(locked=True)]}}
     )
 
-    assert not coordinator.adaptive.is_running(LOCK_ID)  # burst stopped
-    assert coordinator.adaptive.young_confirmation(LOCK_ID)["locked"] is True
+    assert coordinator.adaptive.is_running(LOCK_ID)
+    assert coordinator.adaptive.expected_locked(LOCK_ID) is True
+    assert coordinator.adaptive.young_confirmation(LOCK_ID) is None
     assert lock.lock_state == "Unlocked"  # excluded: payload not applied
+
+    mock_uhome_api.get_device_state.return_value = {
+        "payload": {"devices": [_raw_state(locked=True)]}
+    }
+    await coordinator.adaptive.async_tick(LOCK_ID)
+
+    mock_uhome_api.get_device_state.assert_awaited_once_with([LOCK_ID], None)
+    assert lock.lock_state == "Locked"
+    assert coordinator.adaptive.young_confirmation(LOCK_ID)["locked"] is True
+    assert not coordinator.adaptive.is_running(LOCK_ID)
