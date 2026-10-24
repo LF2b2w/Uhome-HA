@@ -125,6 +125,65 @@ async def test_confirms_and_stops(scheduled):
     assert scheduled[0]["cancelled"] is False
 
 
+@pytest.mark.parametrize(
+    "omitting_reply",
+    [
+        {"payload": {"devices": []}},
+        {
+            "payload": {
+                "devices": [{"id": "lock-2", "st.lock": {"lockState": "Locked"}}]
+            }
+        },
+        [],
+    ],
+    ids=["empty-devices", "other-device-only", "flat-empty-list"],
+)
+async def test_reply_omitting_device_never_confirms_from_cache(
+    scheduled, omitting_reply
+):
+    """Only a reply record for the polled device may confirm the burst.
+
+    The device cache can already match the commanded state (optimistic
+    update, push event); a reply that omits the device reports nothing and
+    must not be counted as confirmation. A later reply that actually
+    contains the device confirms and stops the burst.
+    """
+    coord = _coordinator()
+    device = MagicMock()
+    device.get_state_data.return_value = {"st.lock": {"lockState": "Locked"}}
+    device.update_state_data = AsyncMock()
+    coord.devices["lock-1"] = device
+    coord.api.get_device_state.return_value = omitting_reply
+
+    poller = AdaptivePoller(coord)
+    poller.start("lock-1", True)
+    await _fire(scheduled[0])
+
+    device.update_state_data.assert_not_called()
+    assert poller.is_running("lock-1")
+    assert len(scheduled) == 2  # rescheduled for the next attempt
+    assert poller.young_confirmation("lock-1") is None
+    coord.async_set_updated_data.assert_not_called()
+
+    coord.api.get_device_state.return_value = {
+        "payload": {
+            "devices": [{"id": "lock-1", "st.lock": {"lockState": "Locked"}}]
+        }
+    }
+    fresh = {"st.lock": {"lockState": "Locked"}}
+
+    async def _update(data):
+        device.get_state_data.return_value = fresh
+
+    device.update_state_data = AsyncMock(side_effect=_update)
+    await _fire(scheduled[-1])
+
+    device.update_state_data.assert_awaited_once()
+    assert "lock-1" not in poller._bursts
+    assert poller.young_confirmation("lock-1")["locked"] is True
+    coord.async_set_updated_data.assert_called_once()
+
+
 async def test_fibonacci_reschedule_until_max_attempts(scheduled):
     coord = _coordinator(idle=60)
     device = MagicMock()

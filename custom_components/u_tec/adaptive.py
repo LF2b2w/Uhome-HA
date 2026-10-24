@@ -298,7 +298,12 @@ class AdaptivePoller:
             )
 
     async def async_tick(self, device_id: str) -> None:
-        """Run one poll after the Adaptive Aggressive timer ends."""
+        """Run one poll after the Adaptive Aggressive timer ends.
+
+        Only a reply record for the polled device is confirmation evidence.
+        A reply that omits the device reports nothing and must not confirm
+        from the existing device cache.
+        """
         burst = self._bursts.get(device_id)
         if burst is None:
             return
@@ -326,11 +331,12 @@ class AdaptivePoller:
             if self._bursts.get(device_id) is not burst:
                 return
             self.coordinator.raise_for_error_payload(response)
+            actual = None
             for device_data in iter_device_payloads(response):
                 if device_data.get("id") == device_id:
                     await device.update_state_data(device_data)
+                    actual = reported_locked(device.get_state_data())
                     break
-            actual = reported_locked(device.get_state_data())
             _LOGGER.debug(
                 "Adaptive aggressive result for %s: locked=%s expected=%s",
                 device_id,
