@@ -1,5 +1,6 @@
 """Tests for AsyncPushUpdateHandler.async_register_webhook — URL resolution."""
 
+import asyncio
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -277,3 +278,149 @@ async def test_24h_reregister_timer_does_not_raise(hass, mock_uhome_api):
         # Clean up the (now re-armed) timer so the lingering-timer guard in
         # pytest-homeassistant-custom-component's teardown doesn't fail us.
         await h.unregister_webhook()
+
+
+async def test_initial_registration_failure_does_not_commit_secret_or_setup(
+    hass, mock_uhome_api
+):
+    from utec_client.exceptions import ApiError
+
+    h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
+    mock_uhome_api.set_push_status.side_effect = ApiError(500, "fail before commit")
+
+    with _patch_no_cloud(), patch(
+        "custom_components.u_tec.api.network.get_url",
+        return_value="https://ha.example.com",
+    ), patch(
+        "custom_components.u_tec.api.webhook.async_generate_url",
+        return_value="https://ha.example.com/api/webhook/x",
+    ), patch("custom_components.u_tec.api.webhook.async_register") as register, patch(
+        "custom_components.u_tec.api.async_track_time_interval"
+    ) as schedule:
+        assert await h.async_register_webhook(auth_data=MagicMock()) is False
+
+    assert h._push_secret is None
+    assert h._unregister_webhook is None
+    assert h._cancel_reregister is None
+    assert h.webhook_url is None
+    register.assert_not_called()
+    schedule.assert_not_called()
+
+
+async def test_failed_refresh_preserves_secret_and_retry_rotates(hass, mock_uhome_api):
+    from utec_client.exceptions import ApiError
+    from custom_components.u_tec.const import DOMAIN
+
+    h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
+    timer = MagicMock()
+    calls = 0
+
+    async def set_status(_url, _secret):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ApiError(500, "fail before commit")
+        return {}
+
+    mock_uhome_api.set_push_status.side_effect = set_status
+    coordinator = MagicMock()
+    coordinator.update_push_data = AsyncMock()
+    hass.data[DOMAIN] = {"e1": {"coordinator": coordinator}}
+    with _patch_no_cloud(), patch(
+        "custom_components.u_tec.api.network.get_url",
+        return_value="https://ha.example.com",
+    ), patch(
+        "custom_components.u_tec.api.webhook.async_generate_url",
+        return_value="https://ha.example.com/api/webhook/x",
+    ), patch("custom_components.u_tec.api.webhook.async_register"), patch(
+        "custom_components.u_tec.api.async_track_time_interval", return_value=timer
+    ) as schedule:
+        assert await h.async_register_webhook(auth_data=MagicMock()) is True
+        old_secret = h._push_secret
+        old_url = h.webhook_url
+        old_timer = h._cancel_reregister
+
+        assert await h.async_register_webhook(auth_data=MagicMock()) is False
+        assert h._push_secret == old_secret
+        assert h.webhook_url == old_url
+        assert h._cancel_reregister is old_timer
+        timer.assert_not_called()
+        old_delivery = MagicMock(
+            method="POST", headers={"Authorization": f"Bearer {old_secret}"}
+        )
+        old_delivery.json = AsyncMock(return_value={})
+        old_delivery.read = AsyncMock(return_value=b"{}")
+        assert (await h._handle_webhook(hass, h.webhook_id, old_delivery)).status == 200
+
+        assert await h.async_register_webhook(auth_data=MagicMock()) is True
+        new_secret = h._push_secret
+
+        new_delivery = MagicMock(
+            method="POST", headers={"Authorization": f"Bearer {new_secret}"}
+        )
+        new_delivery.json = AsyncMock(return_value={})
+        new_delivery.read = AsyncMock(return_value=b"{}")
+        old_delivery = MagicMock(
+            method="POST", headers={"Authorization": f"Bearer {old_secret}"}
+        )
+        old_delivery.json = AsyncMock(return_value={})
+        old_delivery.read = AsyncMock(return_value=b"{}")
+        assert (await h._handle_webhook(hass, h.webhook_id, new_delivery)).status == 200
+        assert (await h._handle_webhook(hass, h.webhook_id, old_delivery)).status == 403
+
+    assert new_secret != old_secret
+    timer.assert_called_once_with()
+    assert schedule.call_count == 2
+
+
+async def test_empty_mapping_is_successful_registration(hass, mock_uhome_api):
+    h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
+    mock_uhome_api.set_push_status.return_value = {}
+
+    with _patch_no_cloud(), patch(
+        "custom_components.u_tec.api.network.get_url",
+        return_value="https://ha.example.com",
+    ), patch(
+        "custom_components.u_tec.api.webhook.async_generate_url",
+        return_value="https://ha.example.com/api/webhook/x",
+    ), patch("custom_components.u_tec.api.webhook.async_register"), patch(
+        "custom_components.u_tec.api.async_track_time_interval", return_value=MagicMock()
+    ):
+        assert await h.async_register_webhook(auth_data=MagicMock()) is True
+    assert h._push_secret is not None
+
+
+async def test_overlapping_registrations_are_serialized(hass, mock_uhome_api):
+    h = AsyncPushUpdateHandler(hass, mock_uhome_api, entry_id="e1")
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    secrets_sent = []
+
+    async def set_status(_url, secret):
+        secrets_sent.append(secret)
+        if len(secrets_sent) == 1:
+            first_started.set()
+            await release_first.wait()
+        return {}
+
+    mock_uhome_api.set_push_status.side_effect = set_status
+    with _patch_no_cloud(), patch(
+        "custom_components.u_tec.api.network.get_url",
+        return_value="https://ha.example.com",
+    ), patch(
+        "custom_components.u_tec.api.webhook.async_generate_url",
+        return_value="https://ha.example.com/api/webhook/x",
+    ), patch("custom_components.u_tec.api.webhook.async_register"), patch(
+        "custom_components.u_tec.api.async_track_time_interval", return_value=MagicMock()
+    ):
+        first = asyncio.create_task(h.async_register_webhook(auth_data=MagicMock()))
+        await first_started.wait()
+        second = asyncio.create_task(h.async_register_webhook(auth_data=MagicMock()))
+        await asyncio.sleep(0)
+        assert len(secrets_sent) == 1
+        release_first.set()
+        assert await first is True
+        assert await second is True
+
+    assert len(secrets_sent) == 2
+    assert h._push_secret == secrets_sent[-1]
