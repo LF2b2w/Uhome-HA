@@ -57,6 +57,29 @@ def _raise_for_error_payload(response, *, auth_only: bool = False) -> None:
         raise UpdateFailed(f"U-Tec API error {code}: {message}")
 
 
+def _normalized_states(device_data: dict) -> dict:
+    """Convert a raw ``{id, states: [{capability, name, value}]}`` payload into
+    the client's normalized ``{capability: {name: value}}`` shape.
+
+    Mirrors ``utec_client.devices.device.BaseDevice.get_state_data`` (pinned
+    client 0.5.0; ``Lock`` does not override it). The AdaptivePoller helpers
+    and ``lock_state.reported_locked`` only read the normalized shape, so poll
+    and push reports must be converted before reaching them. This runs without
+    touching the live device, letting the contradiction guard evaluate an
+    incoming report before anything is applied.
+    """
+    normalized: dict = {}
+    for state in device_data.get("states", []):
+        capability = state.get("capability")
+        name = state.get("name")
+        value = state.get("value")
+        if capability and name:
+            if capability not in normalized:
+                normalized[capability] = {}
+            normalized[capability][name] = value
+    return normalized
+
+
 class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Uhome data."""
 
@@ -239,13 +262,14 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     device_id = device_data.get("id")
                     if device_id and device_id in self.devices:
                         device = self.devices[device_id]
-                        if self._defer_contradicting_report(device_id, device_data):
+                        state_data = _normalized_states(device_data)
+                        if self._defer_contradicting_report(device_id, state_data):
                             continue
                         await device.update_state_data(device_data)
                         self.adaptive.cancel_if_confirmed(
                             device_id,
                             device,
-                            state_data=device_data,
+                            state_data=state_data,
                         )
 
             self.consecutive_update_failures = 0
@@ -344,18 +368,10 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     continue
 
                 device = self.devices[device_id]
-                if self._defer_contradicting_report(device_id, device_data):
+                state_data = _normalized_states(device_data)
+                if self._defer_contradicting_report(device_id, state_data):
                     continue
 
-                # A confirming push stops the burst even when this lock is
-                # excluded from push selection. Applying the payload still
-                # respects that filter.
-                self.adaptive.cancel_if_confirmed(
-                    device_id,
-                    device,
-                    reason="push",
-                    state_data=device_data,
-                )
                 if self.push_devices and device_id not in self.push_devices:
                     _LOGGER.debug(
                         "Skipping push update for device %s (not in selected devices)",
@@ -364,6 +380,12 @@ class UhomeDataUpdateCoordinator(DataUpdateCoordinator):
                     continue
 
                 await device.update_state_data(device_data)
+                self.adaptive.cancel_if_confirmed(
+                    device_id,
+                    device,
+                    reason="push",
+                    state_data=state_data,
+                )
 
                 _LOGGER.debug(
                     "Updated device %s with push data: %s",
