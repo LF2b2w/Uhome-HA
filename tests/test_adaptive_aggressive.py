@@ -24,6 +24,7 @@ from custom_components.u_tec.optimistic import (
     DEFAULT_ADAPTIVE_AGGRESSIVE,
     is_adaptive_aggressive_enabled,
 )
+from utec_client.devices.lock import Lock
 
 
 def test_default_is_off():
@@ -167,7 +168,18 @@ async def test_reply_omitting_device_never_confirms_from_cache(
 
     coord.api.get_device_state.return_value = {
         "payload": {
-            "devices": [{"id": "lock-1", "st.lock": {"lockState": "Locked"}}]
+            "devices": [
+                {
+                    "id": "lock-1",
+                    "states": [
+                        {
+                            "capability": "st.lock",
+                            "name": "lockState",
+                            "value": "Locked",
+                        },
+                    ],
+                }
+            ]
         }
     }
     fresh = {"st.lock": {"lockState": "Locked"}}
@@ -179,6 +191,94 @@ async def test_reply_omitting_device_never_confirms_from_cache(
     await _fire(scheduled[-1])
 
     device.update_state_data.assert_awaited_once()
+    assert "lock-1" not in poller._bursts
+    assert poller.young_confirmation("lock-1")["locked"] is True
+    coord.async_set_updated_data.assert_called_once()
+
+
+def make_poller_real_lock():
+    """Pinned-client Lock whose cache already shows the commanded state."""
+    lock = Lock(
+        {
+            "id": "lock-1",
+            "name": "Test lock",
+            "handleType": "utec-lock",
+            "category": "lock",
+            "deviceInfo": {},
+            "attributes": {},
+        },
+        None,
+    )
+    lock._state_data = {
+        "id": "lock-1",
+        "states": [
+            {"capability": "st.lock", "name": "lockState", "value": "Locked"},
+        ],
+    }
+    return lock
+
+
+@pytest.mark.parametrize(
+    "unhelpful_record",
+    [
+        # No "states" key: the pinned client ignores the record entirely and
+        # preserves the cached state, which already matches the target.
+        {"id": "lock-1"},
+        # Present states without lock data: the client applies the record and
+        # replaces the cache, so no lock value is reported by this reply.
+        {
+            "id": "lock-1",
+            "states": [
+                {"capability": "st.battery", "name": "battery", "value": 80},
+            ],
+        },
+    ],
+    ids=["no-states-ignored", "battery-only-replaces"],
+)
+async def test_record_without_lock_report_never_confirms_from_cache(
+    scheduled, unhelpful_record
+):
+    """Only a reply record the client applies with lock data may confirm.
+
+    utec_client BaseDevice.update_state_data ignores records without a
+    "states" key, so the cached state that already matches the command is
+    not evidence from this reply. A later record carrying lock states
+    replaces the cache, confirms the burst, and stops it.
+    """
+    coord = _coordinator()
+    device = make_poller_real_lock()
+    coord.devices["lock-1"] = device
+    coord.api.get_device_state.return_value = {
+        "payload": {"devices": [unhelpful_record]}
+    }
+
+    poller = AdaptivePoller(coord)
+    poller.start("lock-1", True)
+    await _fire(scheduled[0])
+
+    assert poller.is_running("lock-1")
+    assert len(scheduled) == 2  # rescheduled for the next attempt
+    assert poller.young_confirmation("lock-1") is None
+    coord.async_set_updated_data.assert_not_called()
+
+    coord.api.get_device_state.return_value = {
+        "payload": {
+            "devices": [
+                {
+                    "id": "lock-1",
+                    "states": [
+                        {
+                            "capability": "st.lock",
+                            "name": "lockState",
+                            "value": "Locked",
+                        },
+                    ],
+                }
+            ]
+        }
+    }
+    await _fire(scheduled[-1])
+
     assert "lock-1" not in poller._bursts
     assert poller.young_confirmation("lock-1")["locked"] is True
     coord.async_set_updated_data.assert_called_once()

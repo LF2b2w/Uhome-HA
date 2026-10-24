@@ -300,9 +300,11 @@ class AdaptivePoller:
     async def async_tick(self, device_id: str) -> None:
         """Run one poll after the Adaptive Aggressive timer ends.
 
-        Only a reply record for the polled device is confirmation evidence.
-        A reply that omits the device reports nothing and must not confirm
-        from the existing device cache.
+        Only a reply record for the polled device that the device client
+        applies is confirmation evidence: a record carrying a "states"
+        key, or one that changes the reported state. Records the client
+        ignores, and applied states without a lock value, report nothing
+        and must not confirm from the existing device cache.
         """
         burst = self._bursts.get(device_id)
         if burst is None:
@@ -334,8 +336,11 @@ class AdaptivePoller:
             actual = None
             for device_data in iter_device_payloads(response):
                 if device_data.get("id") == device_id:
+                    before = device.get_state_data()
                     await device.update_state_data(device_data)
-                    actual = reported_locked(device.get_state_data())
+                    after = device.get_state_data()
+                    if "states" in device_data or after != before:
+                        actual = reported_locked(after)
                     break
             _LOGGER.debug(
                 "Adaptive aggressive result for %s: locked=%s expected=%s",
