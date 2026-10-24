@@ -1,5 +1,6 @@
 """API for Uhome bound to Home Assistant OAuth."""
 
+import asyncio
 import json
 import logging
 import secrets
@@ -62,6 +63,7 @@ class AsyncPushUpdateHandler:
         self._unregister_webhook = None
         self._cancel_reregister = None
         self._push_secret: str | None = None
+        self._registration_lock = asyncio.Lock()
         self.api = api
         self._auth_data = None
         self._used_cloudhook = False
@@ -164,6 +166,11 @@ class AsyncPushUpdateHandler:
 
     async def async_register_webhook(self, auth_data) -> bool:
         """Register webhook with Home Assistant and the Uhome API."""
+        async with self._registration_lock:
+            return await self._async_register_webhook(auth_data)
+
+    async def _async_register_webhook(self, auth_data) -> bool:
+        """Register once at a time; only publish a secret after remote success."""
         self._auth_data = auth_data
 
         webhook_url = await self._resolve_webhook_url()
@@ -194,13 +201,16 @@ class AsyncPushUpdateHandler:
                 webhook_url,
             )
 
-        # Generate a fresh secret for this registration
-        self._push_secret = self._generate_secret()
+        # Keep the last acknowledged secret active while the remote registration
+        # is in flight. If the call reports failure, the remote may still have
+        # committed before the error; without server-side confirmation, that
+        # ambiguous outcome cannot be reconciled here without a grace policy.
+        attempt_secret = self._generate_secret()
         _LOGGER.debug("Generated new push secret for webhook registration")
 
         try:
             _LOGGER.debug("Registering webhook URL: %s", webhook_url)
-            result = await self.api.set_push_status(webhook_url, self._push_secret)
+            result = await self.api.set_push_status(webhook_url, attempt_secret)
             _LOGGER.debug(
                 "Webhook registration completed: ok=%s",
                 bool(result),
@@ -208,6 +218,11 @@ class AsyncPushUpdateHandler:
         except ApiError as err:
             _LOGGER.error("Failed to register webhook with U-Tec API: %s", err)
             return False
+
+        # The API call completed successfully, including when it returns an empty
+        # mapping. Promote the secret only now so failed attempts retain the last
+        # acknowledged value.
+        self._push_secret = attempt_secret
 
         # Register HA-side webhook handler (only once). webhook.async_register
         # returns None, so we use _unregister_webhook as a boolean flag — True
